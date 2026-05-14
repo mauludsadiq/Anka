@@ -1,0 +1,70 @@
+import("../src/origin") as origin
+import("../src/node") as node
+import("../src/registry") as reg
+import("../src/claim_space") as space
+import("std/list") as list
+
+test "genesis produces stable digest" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  let d1 = g.registry_digest_hex in
+  let g2 = origin.boot_genesis(n, 1000) in
+  d1 == g2.registry_digest_hex
+}
+
+test "genesis version is zero" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  g.registry.version == 0
+}
+
+test "genesis is witnessed by origin node" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  g.witness.witness_node_id == n.node_id
+}
+
+test "register space increments version" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("test.space", "invariant", "single-winner", "test") in
+  let result = origin.register_space(g, cs, n, 1001) in
+  result.registry.version == 1
+}
+
+test "register space chains parent digest" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("test.space", "invariant", "single-winner", "test") in
+  let result = origin.register_space(g, cs, n, 1001) in
+  result.registry.parent_registry_digest_hex == g.registry_digest_hex
+}
+
+test "verify genesis accepts valid genesis object" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  let obj = origin.genesis_object(g) in
+  let report = origin.verify_genesis(obj, n.node_id) in
+  report.valid && report.digest_ok && report.issuer_ok && report.version_ok
+}
+
+test "verify genesis rejects wrong issuer" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_genesis(n, 1000) in
+  let obj = origin.genesis_object(g) in
+  let report = origin.verify_genesis(obj, "sha256:wrongnode") in
+  !report.valid && !report.issuer_ok
+}
+
+test "boot with default spaces registers four spaces" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_with_default_spaces(n, 1000) in
+  let spaces = reg.known_spaces(g.registry) in
+  list.len(spaces) == 4
+}
+
+test "default spaces include invariant and interpretive" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_with_default_spaces(n, 1000) in
+  reg.has_space(g.registry, "anka.invariant.crypto") && reg.has_space(g.registry, "anka.interpretive.econ")
+}

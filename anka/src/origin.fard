@@ -1,0 +1,76 @@
+import("std/json") as json
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+import("node") as node
+import("registry") as reg
+import("claim_space") as space
+import("canonical") as canon
+
+fn boot_genesis(origin_node, timestamp_unix_secs) {
+  let g = reg.genesis(origin_node, timestamp_unix_secs) in
+  let w = reg.witness_registry(g, origin_node, timestamp_unix_secs) in
+  let g_witnessed = reg.add_witness(g, w) in
+  {
+    registry: g_witnessed,
+    registry_digest_hex: reg.digest(g_witnessed),
+    origin_node_id: origin_node.node_id,
+    witness: w,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn register_space(genesis_state, claim_space_obj, origin_node, timestamp_unix_secs) {
+  let result = reg.add_space(genesis_state.registry, claim_space_obj, origin_node, timestamp_unix_secs) in
+  let w = reg.witness_registry(result.registry, origin_node, timestamp_unix_secs) in
+  let witnessed = reg.add_witness(result.registry, w) in
+  {
+    registry: witnessed,
+    registry_digest_hex: reg.digest(witnessed),
+    space_digest_hex: result.space_digest_hex,
+    accepted: result.accepted
+  }
+}
+
+fn genesis_object(genesis_state) {
+  {
+    kind: "anka_genesis",
+    origin_node_id: genesis_state.origin_node_id,
+    registry_digest_hex: genesis_state.registry_digest_hex,
+    registry: genesis_state.registry,
+    timestamp_unix_secs: genesis_state.timestamp_unix_secs
+  }
+}
+
+fn verify_genesis(genesis_obj, claimed_origin_node_id) {
+  let digest_ok = reg.digest(genesis_obj.registry) == genesis_obj.registry_digest_hex in
+  let issuer_ok = genesis_obj.origin_node_id == claimed_origin_node_id in
+  let version_ok = true in
+  {
+    valid: digest_ok && issuer_ok && version_ok,
+    digest_ok: digest_ok,
+    issuer_ok: issuer_ok,
+    version_ok: version_ok,
+    registry_digest_hex: genesis_obj.registry_digest_hex
+  }
+}
+
+fn default_claim_spaces() {
+  [
+    space.make_claim_space("anka.invariant.crypto", "invariant", "single-winner", "Cryptographic proofs and attestations"),
+    space.make_claim_space("anka.invariant.compute", "invariant", "single-winner", "Deterministic computation results"),
+    space.make_claim_space("anka.interpretive.econ", "interpretive", "plural", "Economic forecasts and models"),
+    space.make_claim_space("anka.interpretive.science", "interpretive", "plural", "Scientific findings and forecasts")
+  ]
+}
+
+fn boot_with_default_spaces(origin_node, timestamp_unix_secs) {
+  let g = boot_genesis(origin_node, timestamp_unix_secs) in
+  let spaces = default_claim_spaces() in
+  list.fold(spaces, g, fn(state, cs) {
+    let result = register_space(state, cs, origin_node, timestamp_unix_secs) in
+    { ...state, registry: result.registry, registry_digest_hex: result.registry_digest_hex }
+  })
+}
+
+export { boot_genesis, register_space, genesis_object, verify_genesis, default_claim_spaces, boot_with_default_spaces }

@@ -1,0 +1,56 @@
+import("std/net") as net
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/sqlite") as sqlite
+import("std/datetime") as dt
+import("node") as node
+import("origin") as origin
+
+let port = 18090
+let node_name = "anka-origin"
+let db_path = "file:out/origin/anka_origin.db?cache=shared&mode=rwc"
+
+let db = sqlite.open(db_path)
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+
+let origin_node = node.new_node(node_name)
+let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'origin_node'")
+let boot_node = if list.len(existing) > 0 then json.decode(existing[0].value) else origin_node
+let _ = if list.len(existing) == 0 then sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('origin_node', '", json.encode(origin_node), "')"])) else null
+
+let genesis_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'")
+let boot_genesis = if list.len(genesis_rows) > 0 then
+  json.decode(genesis_rows[0].value)
+else
+  let g = origin.boot_with_default_spaces(boot_node, 1000) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('genesis', '", json.encode(g), "')"])) in
+  g
+
+let _ = net.serve(port, fn(req) {
+  if req.path == "/health" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, node_id: boot_node.node_id, kind: "origin" }), content_type: "application/json" }
+  else if req.path == "/genesis" && req.method == "GET" then
+    let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'") in
+    let g = json.decode(rows[0].value) in
+    let obj = origin.genesis_object(g) in
+    { status: 200, body: json.encode({ ok: true, genesis: obj }), content_type: "application/json" }
+  else if req.path == "/genesis/verify" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'") in
+    let g = json.decode(rows[0].value) in
+    let obj = origin.genesis_object(g) in
+    let report = origin.verify_genesis(obj, boot_node.node_id) in
+    { status: 200, body: json.encode({ ok: true, report: report }), content_type: "application/json" }
+  else if req.path == "/spaces" && req.method == "GET" then
+    let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'") in
+    let g = json.decode(rows[0].value) in
+    let spaces = list.map(list.filter(rec.keys(g.registry.spaces), fn(k) { true }), fn(k) {
+      let entry = rec.get(g.registry.spaces, k) in
+      { name: k, category: entry.space.category, convergence_policy: entry.space.convergence_policy }
+    }) in
+    { status: 200, body: json.encode({ ok: true, spaces: spaces, registry_digest_hex: g.registry_digest_hex }), content_type: "application/json" }
+  else
+    { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), content_type: "application/json" }
+})
