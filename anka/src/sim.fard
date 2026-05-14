@@ -1,7 +1,6 @@
 import("std/list") as list
 import("std/rec") as rec
 import("std/json") as json
-import("std/rand") as rand
 import("node") as node
 import("claim_space") as space
 import("claim_set") as cset
@@ -9,7 +8,7 @@ import("reputation") as rep
 
 fn run_scenario(scenario) {
   let nodes = list.map(scenario.nodes, fn(n) {
-    { id: n.id, collapse_policy: n.collapse_policy, node: node.new_node_generated() }
+    { id: n.id, collapse_policy: n.collapse_policy, node: node.new_node(n.id) }
   }) in
   let find_node_rec = fn(id) {
     list.find(nodes, fn(n) { n.id == id }).some

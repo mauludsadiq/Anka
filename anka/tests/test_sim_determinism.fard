@@ -1,0 +1,10 @@
+import("std/json") as json
+import("std/io") as io
+import("../src/sim") as sim
+
+test "scenario run is deterministic" {
+  let scenario = json.decode(io.read_file("anka/scenarios/scenario_econ_divergence.json").ok) in
+  let r1 = sim.run_scenario(scenario) in
+  let r2 = sim.run_scenario(scenario) in
+  json.canonicalize(r1) == json.canonicalize(r2)
+}
