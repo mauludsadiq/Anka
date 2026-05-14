@@ -140,9 +140,9 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Status
 
-82 tests. 1,829 lines of Fard. Origin node live with verified genesis. Two mesh nodes exchanging claims over the wire.
+93 tests. 1,927 lines of Fard. Origin node live with verified genesis. Two mesh nodes exchanging claims over the wire.
 
-The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims with independent execution verification, persistent live processes, a real two-node mesh with outbound gossip broadcast, and an origin node that boots genesis, registers default claim spaces, and serves a verifiable bootstrap object to any joining node.
+The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims with independent execution verification, persistent live processes, a real two-node mesh with outbound gossip broadcast, an origin node that boots genesis and registers default claim spaces, and declared node roles with signed role declarations and enforced permitted operations.
 
 # License
 
