@@ -1,0 +1,44 @@
+import("std/rec") as rec
+import("challenge") as challenge
+import("claim_space") as claim_space
+import("reputation") as reputation
+
+fn make_semantic_challenge(target_digest_hex, challenger_node, claim_space_name, semantic_kind, evidence, timestamp_unix_secs) {
+  challenge.make_challenge(
+    target_digest_hex,
+    challenger_node.node_id,
+    semantic_kind,
+    evidence,
+    timestamp_unix_secs,
+    challenger_node.node_secret
+  )
+}
+
+fn resolution_rule(space_entry) {
+  if space_entry.space.category == "invariant" then "adversarial" else "augmentative"
+}
+
+fn resolve(registry, rep, challenged_node_id, target_claim_space, c, upheld) {
+  let entry = claim_space.get_space(registry, target_claim_space) in
+  let rule = resolution_rule(entry) in
+  if rule == "adversarial" then
+    {
+      rule: rule,
+      reputation: if upheld then
+        reputation.record_failure(reputation.record_pass(rep, c.challenger_node_id, target_claim_space), challenged_node_id, target_claim_space)
+      else
+        reputation.record_failure(rep, c.challenger_node_id, target_claim_space),
+      outcome: if upheld then "challenge_upheld_target_penalized" else "challenge_rejected_challenger_penalized"
+    }
+  else
+    {
+      rule: rule,
+      reputation: if upheld then
+        reputation.record_pass(rep, c.challenger_node_id, target_claim_space)
+      else
+        rep,
+      outcome: if upheld then "challenge_added_divergence" else "challenge_retained_as_unresolved"
+    }
+}
+
+export { make_semantic_challenge, resolution_rule, resolve }

@@ -1,0 +1,45 @@
+import("../src/node") as node
+import("../src/claim_space") as space
+import("../src/reputation") as rep
+import("../src/semantic_challenge") as sem
+
+test "invariant space resolves challenges adversarially" {
+  let r0 = space.registry_empty() in
+  let sp = space.make_claim_space("block_validity", "invariant", "single", "block validity") in
+  let reg = space.register(r0, sp).registry in
+  let entry = space.get_space(reg, "block_validity") in
+  sem.resolution_rule(entry) == "adversarial"
+}
+
+test "interpretive space resolves challenges augmentatively" {
+  let r0 = space.registry_empty() in
+  let sp = space.make_claim_space("economic_models_2026", "interpretive", "plural", "economic models") in
+  let reg = space.register(r0, sp).registry in
+  let entry = space.get_space(reg, "economic_models_2026") in
+  sem.resolution_rule(entry) == "augmentative"
+}
+
+test "upheld invariant challenge rewards challenger and penalizes target" {
+  let target = node.new_node("target") in
+  let challenger = node.new_node("challenger") in
+  let r0 = space.registry_empty() in
+  let sp = space.make_claim_space("block_validity", "invariant", "single", "block validity") in
+  let reg = space.register(r0, sp).registry in
+  let c = sem.make_semantic_challenge("sha256:x", challenger, "block_validity", "semantic_invalid_state", "invalid state transition", 1) in
+  let out = sem.resolve(reg, rep.empty(), target.node_id, "block_validity", c, true) in
+  rep.get_score(out.reputation, challenger.node_id, "block_validity").score == 1 &&
+  rep.get_score(out.reputation, target.node_id, "block_validity").score == -1
+}
+
+test "upheld interpretive challenge adds divergence without penalizing target" {
+  let target = node.new_node("target") in
+  let challenger = node.new_node("challenger") in
+  let r0 = space.registry_empty() in
+  let sp = space.make_claim_space("economic_models_2026", "interpretive", "plural", "economic models") in
+  let reg = space.register(r0, sp).registry in
+  let c = sem.make_semantic_challenge("sha256:x", challenger, "economic_models_2026", "semantic_counter_evidence", "missing labor data", 1) in
+  let out = sem.resolve(reg, rep.empty(), target.node_id, "economic_models_2026", c, true) in
+  out.outcome == "challenge_added_divergence" &&
+  rep.get_score(out.reputation, challenger.node_id, "economic_models_2026").score == 1 &&
+  rep.get_score(out.reputation, target.node_id, "economic_models_2026").score == 0
+}
