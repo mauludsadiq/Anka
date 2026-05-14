@@ -1,0 +1,31 @@
+import("std/json") as json
+import("canonical") as canon
+
+fn challenge_body(target_digest_hex, challenger_node_id, kind, evidence, timestamp_unix_secs) {
+  json.canonicalize({
+    target_digest_hex: target_digest_hex,
+    challenger_node_id: challenger_node_id,
+    kind: kind,
+    evidence: evidence,
+    timestamp_unix_secs: timestamp_unix_secs
+  })
+}
+
+fn make_challenge(target_digest_hex, challenger_node_id, kind, evidence, timestamp_unix_secs, challenger_secret) {
+  let body_digest = canon.digest_text(challenge_body(target_digest_hex, challenger_node_id, kind, evidence, timestamp_unix_secs)) in
+  {
+    target_digest_hex: target_digest_hex,
+    challenger_node_id: challenger_node_id,
+    kind: kind,
+    evidence: evidence,
+    timestamp_unix_secs: timestamp_unix_secs,
+    signature_hex: canon.structural_signature(challenger_secret, body_digest)
+  }
+}
+
+fn verify_challenge(c, challenger_secret) {
+  let body_digest = canon.digest_text(challenge_body(c.target_digest_hex, c.challenger_node_id, c.kind, c.evidence, c.timestamp_unix_secs)) in
+  canon.verify_structural_signature(challenger_secret, body_digest, c.signature_hex)
+}
+
+export { challenge_body, make_challenge, verify_challenge }

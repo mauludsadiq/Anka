@@ -1,0 +1,44 @@
+import("std/json") as json
+import("std/rec") as rec
+import("node") as node
+
+let a0 = node.new_node("node-A")
+let b0 = node.new_node("node-B")
+let c0 = node.new_node("node-C")
+
+let pub = node.publish(
+  a0,
+  "anka.layer1.demo",
+  "claim:001",
+  "states",
+  "ANKA layer 1 transports canonical claim objects by digest",
+  [],
+  1775710735
+)
+
+let a1 = pub.node
+let gossip_msg = pub.gossip
+let b1 = node.receive_gossip(b0, gossip_msg)
+let fetched = node.fetch_claim(a1, gossip_msg.digest_hex)
+let accepted = node.accept_envelope(b1, fetched, a1.node_secret)
+let b2 = accepted.node
+let wit = node.structurally_witness(b2, fetched, a1.node_secret, 1775710736)
+let b3 = wit.node
+let c1 = node.receive_gossip(c0, gossip_msg)
+let c2 = node.receive_witness(c1, wit.witness)
+let ch = node.file_challenge(c2, gossip_msg.digest_hex, "MissingEvidenceRef", "demo structural challenge: no external evidence refs supplied", 1775710737)
+let c3 = ch.node
+let a2 = node.receive_challenge(a1, ch.challenge)
+let b4 = node.sync_from(b3, c3)
+
+{
+  ok: true,
+  invariant: "accepted envelope requires sha256(canonical_claim) == digest",
+  published_digest: gossip_msg.digest_hex,
+  node_a: node.node_summary(a2),
+  node_b: node.node_summary(b4),
+  node_c: node.node_summary(c3),
+  verification_report: accepted.report,
+  witness: wit.witness,
+  challenge: ch.challenge
+}

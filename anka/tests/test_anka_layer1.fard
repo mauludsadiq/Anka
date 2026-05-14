@@ -1,0 +1,73 @@
+import("../src/node") as node
+import("../src/claim") as claim
+import("../src/canonical") as canon
+import("../src/witness") as witness
+import("../src/challenge") as challenge
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+test "claim digest is canonical and stable" {
+  let n = node.new_node("stable")
+  let c = claim.make_claim("test.space", "s", "p", "o", [], n.node_id, 100) in
+  let d1 = canon.digest_claim(c) in
+  let d2 = canon.digest_claim(c) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}
+
+test "publish stores envelope under its digest" {
+  let n0 = node.new_node("publisher") in
+  let pub = node.publish(n0, "test.space", "s", "p", "o", [], 101) in
+  node.has_claim(pub.node, pub.envelope.digest_hex)
+}
+
+test "thin gossip carries digest without full claim" {
+  let n0 = node.new_node("publisher") in
+  let pub = node.publish(n0, "test.space", "s", "p", "o", [], 102) in
+  pub.gossip.kind == "GOSSIP_DIGEST" && pub.gossip.digest_hex == pub.envelope.digest_hex && pub.gossip.claim_space == "test.space"
+}
+
+test "receiver accepts envelope only after recomputing digest and signature" {
+  let a0 = node.new_node("issuer") in
+  let b0 = node.new_node("receiver") in
+  let pub = node.publish(a0, "test.space", "s", "p", "o", [], 103) in
+  let acc = node.accept_envelope(b0, pub.envelope, pub.node.node_secret) in
+  acc.report.accepted && acc.report.digest_ok && acc.report.signature_ok && node.has_claim(acc.node, pub.envelope.digest_hex)
+}
+
+test "tampered envelope fails digest verification" {
+  let a0 = node.new_node("issuer-tamper") in
+  let b0 = node.new_node("receiver-tamper") in
+  let pub = node.publish(a0, "test.space", "s", "p", "o", [], 104) in
+  let bad_claim = { ...pub.envelope.claim, object: "changed" } in
+  let bad_env = { ...pub.envelope, claim: bad_claim } in
+  let acc = node.accept_envelope(b0, bad_env, pub.node.node_secret) in
+  !acc.report.accepted && !acc.report.digest_ok
+}
+
+test "structural witness signs verified digest" {
+  let a0 = node.new_node("issuer-witness") in
+  let b0 = node.new_node("witness-node") in
+  let pub = node.publish(a0, "test.space", "s", "p", "o", [], 105) in
+  let wit = node.structurally_witness(b0, pub.envelope, pub.node.node_secret, 106) in
+  wit.accepted && wit.witness.validation_type == "structural" && witness.verify_witness(wit.witness, wit.node.node_secret)
+}
+
+test "challenge object verifies under challenger secret" {
+  let n0 = node.new_node("challenger") in
+  let filed = node.file_challenge(n0, "sha256:abc", "InvalidSchema", "schema violation", 107) in
+  filed.challenge.kind == "InvalidSchema" && challenge.verify_challenge(filed.challenge, filed.node.node_secret)
+}
+
+test "sync copies claim witness challenge state" {
+  let a0 = node.new_node("sync-a") in
+  let b0 = node.new_node("sync-b") in
+  let c0 = node.new_node("sync-c") in
+  let pub = node.publish(a0, "test.space", "s", "p", "o", [], 108) in
+  let wit = node.structurally_witness(b0, pub.envelope, pub.node.node_secret, 109) in
+  let c1 = node.receive_witness(c0, wit.witness) in
+  let filed = node.file_challenge(c1, pub.envelope.digest_hex, "MissingEvidenceRef", "none", 110) in
+  let synced = node.sync_from(pub.node, filed.node) in
+  let summary = node.node_summary(synced) in
+  summary.claim_count == 1 && summary.witness_count == 1 && summary.challenge_count == 1
+}

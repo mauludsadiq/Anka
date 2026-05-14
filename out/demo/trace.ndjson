@@ -1,0 +1,13 @@
+{"cid":"sha256:079b7806d7457a3a32a8dd66d0c8ea06bfdfa5866e33903a291cc43450535630","kind":"std","name":"std/json","t":"module_resolve"}
+{"cid":"sha256:8dff43a3f5b27efa3286132064b6e04f5a2acd609e35bdb2907605fb1a984736","kind":"std","name":"std/rec","t":"module_resolve"}
+{"cid":"sha256:85cf86719a1404bdf622043a96a196e38992eec43191c4202195e032673bd5ef","kind":"rel","name":"node","t":"module_resolve"}
+{"cid":"sha256:2d128f8f8ea9368d1d88d2ca9a6b1202e3e1a2cf5fd974a11b3a697cca1db448","kind":"std","name":"std/list","t":"module_resolve"}
+{"cid":"sha256:e1969d3d0193bc0d79d65c69bb895f85c5b96b9c3b5f182c98c63e71a47b057f","kind":"std","name":"std/str","t":"module_resolve"}
+{"cid":"sha256:b0de910c64590d63d8e1fbf2aa2bb1aea3eb3e8c693fb0119857a15b4b202afa","kind":"std","name":"std/hash","t":"module_resolve"}
+{"cid":"sha256:3475b64bbf56775f47adb757b10353b374bbb3e3e21b2eaf6b7ac1080c86d51e","kind":"rel","name":"claim","t":"module_resolve"}
+{"cid":"sha256:7a042d215c7691db332a5136424419f04bbb14be6d1968b4f86e1c65a4d9527a","kind":"std","name":"std/type","t":"module_resolve"}
+{"cid":"sha256:7a8ad7c431740a680a8b58e841935101c65bb921788eee8d907da13bc5e30840","kind":"rel","name":"canonical","t":"module_resolve"}
+{"cid":"sha256:0cd3b5863afdd273bd0290937811c64a81fd03f866f5d4351f975cb3c91d881e","kind":"rel","name":"gossip","t":"module_resolve"}
+{"cid":"sha256:ef6c6b23988f0e1e1b64c225a474ab55ad753fc3cf22f41689b1148089f630f4","kind":"rel","name":"witness","t":"module_resolve"}
+{"cid":"sha256:b2e08c93b70e76b568f7ee9f0511f84e46f84cfbe4f547255daa8aaaa4687efb","kind":"rel","name":"challenge","t":"module_resolve"}
+{"cid":"sha256:a0e34d2a512028c0f54b8e5ba18aa1b02710f200fb779eb3711a27d1dc415248","t":"module_graph"}

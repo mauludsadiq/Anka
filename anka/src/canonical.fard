@@ -1,0 +1,33 @@
+import("std/json") as json
+import("std/hash") as hash
+import("std/str") as str
+
+fn canonical_claim(claim) {
+  json.canonicalize({
+    claim_space: claim.claim_space,
+    subject: claim.subject,
+    predicate: claim.predicate,
+    object: claim.object,
+    evidence_refs: claim.evidence_refs,
+    issuer_node_id: claim.issuer_node_id,
+    timestamp_unix_secs: claim.timestamp_unix_secs
+  })
+}
+
+fn digest_text(txt) {
+  hash.sha256_text(txt)
+}
+
+fn digest_claim(claim) {
+  digest_text(canonical_claim(claim))
+}
+
+fn structural_signature(node_secret, digest_hex) {
+  hash.sha256_text(str.concat([node_secret, ":", digest_hex]))
+}
+
+fn verify_structural_signature(node_secret, digest_hex, signature_hex) {
+  structural_signature(node_secret, digest_hex) == signature_hex
+}
+
+export { canonical_claim, digest_text, digest_claim, structural_signature, verify_structural_signature }

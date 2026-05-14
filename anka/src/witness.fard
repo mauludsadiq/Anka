@@ -1,0 +1,29 @@
+import("std/json") as json
+import("canonical") as canon
+
+fn witness_body(digest_hex, witness_node_id, validation_type, timestamp_unix_secs) {
+  json.canonicalize({
+    digest_hex: digest_hex,
+    witness_node_id: witness_node_id,
+    validation_type: validation_type,
+    timestamp_unix_secs: timestamp_unix_secs
+  })
+}
+
+fn make_witness(digest_hex, witness_node_id, validation_type, timestamp_unix_secs, witness_secret) {
+  let body_digest = canon.digest_text(witness_body(digest_hex, witness_node_id, validation_type, timestamp_unix_secs)) in
+  {
+    digest_hex: digest_hex,
+    witness_node_id: witness_node_id,
+    validation_type: validation_type,
+    timestamp_unix_secs: timestamp_unix_secs,
+    signature_hex: canon.structural_signature(witness_secret, body_digest)
+  }
+}
+
+fn verify_witness(w, witness_secret) {
+  let body_digest = canon.digest_text(witness_body(w.digest_hex, w.witness_node_id, w.validation_type, w.timestamp_unix_secs)) in
+  canon.verify_structural_signature(witness_secret, body_digest, w.signature_hex)
+}
+
+export { witness_body, make_witness, verify_witness }

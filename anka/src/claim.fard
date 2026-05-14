@@ -1,0 +1,71 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/type") as type
+import("canonical") as canon
+
+fn make_claim(claim_space, subject, predicate, object, evidence_refs, issuer_node_id, timestamp_unix_secs) {
+  {
+    claim_space: claim_space,
+    subject: subject,
+    predicate: predicate,
+    object: object,
+    evidence_refs: evidence_refs,
+    issuer_node_id: issuer_node_id,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn sign_claim(claim, issuer_secret) {
+  let digest_hex = canon.digest_claim(claim) in
+  let sig = canon.structural_signature(issuer_secret, digest_hex) in
+  {
+    claim: claim,
+    digest_hex: digest_hex,
+    issuer_signature_hex: sig
+  }
+}
+
+fn envelope_digest_matches(envelope) {
+  canon.digest_claim(envelope.claim) == envelope.digest_hex
+}
+
+fn envelope_signature_valid(envelope, issuer_secret) {
+  canon.verify_structural_signature(issuer_secret, envelope.digest_hex, envelope.issuer_signature_hex)
+}
+
+fn schema_valid_claim(claim) {
+  type.of(claim.claim_space) == "text" &&
+  type.of(claim.subject) == "text" &&
+  type.of(claim.predicate) == "text" &&
+  type.of(claim.object) == "text" &&
+  type.of(claim.evidence_refs) == "list" &&
+  type.of(claim.issuer_node_id) == "text" &&
+  type.of(claim.timestamp_unix_secs) == "int"
+}
+
+fn schema_valid_envelope(envelope) {
+  type.of(envelope) == "record" &&
+  rec.has(envelope, "claim") &&
+  rec.has(envelope, "digest_hex") &&
+  rec.has(envelope, "issuer_signature_hex") &&
+  schema_valid_claim(envelope.claim) &&
+  type.of(envelope.digest_hex) == "text" &&
+  type.of(envelope.issuer_signature_hex) == "text" &&
+  str.starts_with(envelope.digest_hex, "sha256:")
+}
+
+fn verify_envelope(envelope, issuer_secret) {
+  let schema_ok = schema_valid_envelope(envelope) in
+  let digest_ok = if schema_ok then envelope_digest_matches(envelope) else false in
+  let signature_ok = if digest_ok then envelope_signature_valid(envelope, issuer_secret) else false in
+  {
+    accepted: schema_ok && digest_ok && signature_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    signature_ok: signature_ok,
+    digest_hex: envelope.digest_hex
+  }
+}
+
+export { make_claim, sign_claim, envelope_digest_matches, envelope_signature_valid, schema_valid_claim, schema_valid_envelope, verify_envelope }

@@ -1,0 +1,113 @@
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/hash") as hash
+import("claim") as claim
+import("gossip") as gossip
+import("witness") as witness
+import("challenge") as challenge
+
+fn new_node(name) {
+  let secret = hash.sha256_text(str.concat(["anka-node-secret:", name])) in
+  let node_id = hash.sha256_text(str.concat(["anka-node-id:", secret])) in
+  {
+    node_id: node_id,
+    node_secret: secret,
+    claims: {},
+    witnesses: {},
+    challenges: {},
+    known_digests: []
+  }
+}
+
+fn publish(node, claim_space, subject, predicate, object, evidence_refs, timestamp_unix_secs) {
+  let c = claim.make_claim(claim_space, subject, predicate, object, evidence_refs, node.node_id, timestamp_unix_secs) in
+  let env = claim.sign_claim(c, node.node_secret) in
+  let claims2 = rec.set(node.claims, env.digest_hex, env) in
+  let known2 = list.append(node.known_digests, env.digest_hex) in
+  let node2 = { ...node, claims: claims2, known_digests: known2 } in
+  {
+    node: node2,
+    envelope: env,
+    gossip: gossip.from_envelope(env, 0)
+  }
+}
+
+fn has_claim(node, digest_hex) {
+  rec.has(node.claims, digest_hex)
+}
+
+fn fetch_claim(node, digest_hex) {
+  rec.get(node.claims, digest_hex)
+}
+
+fn receive_gossip(node, g) {
+  let already = list.any(node.known_digests, fn(d) { d == g.digest_hex }) in
+  let known2 = if already then node.known_digests else list.append(node.known_digests, g.digest_hex) in
+  { ...node, known_digests: known2 }
+}
+
+fn accept_envelope(node, envelope, issuer_secret) {
+  let report = claim.verify_envelope(envelope, issuer_secret) in
+  if report.accepted then {
+    node: { ...node, claims: rec.set(node.claims, envelope.digest_hex, envelope) },
+    report: report
+  } else {
+    node: node,
+    report: report
+  }
+}
+
+fn structurally_witness(node, envelope, issuer_secret, timestamp_unix_secs) {
+  let report = claim.verify_envelope(envelope, issuer_secret) in
+  if report.accepted then {
+    accepted: true,
+    node: { ...node, witnesses: rec.set(node.witnesses, envelope.digest_hex, witness.make_witness(envelope.digest_hex, node.node_id, "structural", timestamp_unix_secs, node.node_secret)) },
+    witness: witness.make_witness(envelope.digest_hex, node.node_id, "structural", timestamp_unix_secs, node.node_secret),
+    report: report
+  } else {
+    accepted: false,
+    node: node,
+    witness: null,
+    report: report
+  }
+}
+
+fn receive_witness(node, w) {
+  { ...node, witnesses: rec.set(node.witnesses, w.digest_hex, w) }
+}
+
+fn file_challenge(node, target_digest_hex, kind, evidence, timestamp_unix_secs) {
+  let c = challenge.make_challenge(target_digest_hex, node.node_id, kind, evidence, timestamp_unix_secs, node.node_secret) in
+  {
+    node: { ...node, challenges: rec.set(node.challenges, target_digest_hex, c) },
+    challenge: c
+  }
+}
+
+fn receive_challenge(node, c) {
+  { ...node, challenges: rec.set(node.challenges, c.target_digest_hex, c) }
+}
+
+fn sync_from(node, peer) {
+  let claim_keys = rec.keys(peer.claims) in
+  let witness_keys = rec.keys(peer.witnesses) in
+  let challenge_keys = rec.keys(peer.challenges) in
+  let claims2 = list.fold(claim_keys, node.claims, fn(acc, k) { rec.set(acc, k, rec.get(peer.claims, k)) }) in
+  let witnesses2 = list.fold(witness_keys, node.witnesses, fn(acc, k) { rec.set(acc, k, rec.get(peer.witnesses, k)) }) in
+  let challenges2 = list.fold(challenge_keys, node.challenges, fn(acc, k) { rec.set(acc, k, rec.get(peer.challenges, k)) }) in
+  let known2 = list.dedupe(list.concat([node.known_digests, peer.known_digests])) in
+  { ...node, claims: claims2, witnesses: witnesses2, challenges: challenges2, known_digests: known2 }
+}
+
+fn node_summary(node) {
+  {
+    node_id: node.node_id,
+    claim_count: list.len(rec.keys(node.claims)),
+    witness_count: list.len(rec.keys(node.witnesses)),
+    challenge_count: list.len(rec.keys(node.challenges)),
+    known_digest_count: list.len(node.known_digests)
+  }
+}
+
+export { new_node, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }
