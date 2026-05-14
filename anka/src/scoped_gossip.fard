@@ -1,0 +1,60 @@
+import("std/list") as list
+import("std/rec") as rec
+import("node") as node
+import("gossip") as gossip
+import("transport") as transport
+
+fn subscription_empty() {
+  { spaces: [] }
+}
+
+fn subscription_add(sub, claim_space) {
+  { spaces: list.dedupe(list.append(sub.spaces, claim_space)) }
+}
+
+fn subscription_has(sub, claim_space) {
+  list.any(sub.spaces, fn(s) { s == claim_space })
+}
+
+fn subscription_all() {
+  { spaces: ["*"] }
+}
+
+fn subscription_matches(sub, claim_space) {
+  list.any(sub.spaces, fn(s) { s == "*" || s == claim_space })
+}
+
+fn scoped_sync_plan(from_node, to_node, to_subscription) {
+  let missing = list.filter(from_node.known_digests, fn(d) {
+    let env = node.fetch_claim(from_node, d) in
+    let in_scope = if env == null then false else subscription_matches(to_subscription, env.claim.claim_space) in
+    let not_known = !list.any(to_node.known_digests, fn(x) { x == d }) in
+    in_scope && not_known
+  }) in
+  {
+    from_node_id: from_node.node_id,
+    to_node_id: to_node.node_id,
+    missing_digests: missing,
+    count: list.len(missing)
+  }
+}
+
+fn scoped_gossip_once(from_node, to_node, to_subscription, peer_book, timestamp_unix_secs) {
+  let scoped_digests = list.filter(from_node.known_digests, fn(d) {
+    let env = node.fetch_claim(from_node, d) in
+    if env == null then false
+    else subscription_matches(to_subscription, env.claim.claim_space)
+  }) in
+  list.fold(scoped_digests, { node: to_node, sent_count: 0, filtered_count: list.len(from_node.known_digests) - list.len(scoped_digests) }, fn(acc, d) {
+    let env = node.fetch_claim(from_node, d) in
+    let g = gossip.from_envelope(env, 0) in
+    let wire = transport.make_gossip_wire(from_node, g, timestamp_unix_secs) in
+    let rx = transport.receive_wire(peer_book, acc.node, wire) in
+    if rx.accepted then
+      { node: rx.node, sent_count: acc.sent_count + 1, filtered_count: acc.filtered_count }
+    else
+      { node: acc.node, sent_count: acc.sent_count, filtered_count: acc.filtered_count }
+  })
+}
+
+export { subscription_empty, subscription_add, subscription_has, subscription_all, subscription_matches, scoped_sync_plan, scoped_gossip_once }
