@@ -1,0 +1,65 @@
+import("std/rec") as rec
+import("std/list") as list
+import("reputation") as rep
+
+// Witness duty penalties are steeper than publisher penalties.
+// A lazy witness (attests without recomputing) or negligent witness
+// (attests a claim that is later successfully challenged) is penalized
+// at a higher rate than a publisher whose claim is challenged.
+//
+// Publisher challenge penalty:  -1 per upheld challenge
+// Witness negligence penalty:   -3 per upheld challenge on attested claim
+// Witness laziness penalty:     -2 per structural verification failure
+
+fn publisher_penalty() { 1 }
+fn witness_negligence_penalty() { 3 }
+fn witness_laziness_penalty() { 2 }
+
+fn record_publisher_challenge(rep_state, publisher_node_id, claim_space) {
+  let s = rep.get_score(rep_state, publisher_node_id, claim_space) in
+  rep.set_score(rep_state, publisher_node_id, claim_space, {
+    passes: s.passes,
+    failures: s.failures + 1,
+    score: s.score - publisher_penalty()
+  })
+}
+
+fn record_witness_negligence(rep_state, witness_node_id, claim_space) {
+  let s = rep.get_score(rep_state, witness_node_id, claim_space) in
+  rep.set_score(rep_state, witness_node_id, claim_space, {
+    passes: s.passes,
+    failures: s.failures + 1,
+    score: s.score - witness_negligence_penalty()
+  })
+}
+
+fn record_witness_laziness(rep_state, witness_node_id, claim_space) {
+  let s = rep.get_score(rep_state, witness_node_id, claim_space) in
+  rep.set_score(rep_state, witness_node_id, claim_space, {
+    passes: s.passes,
+    failures: s.failures + 1,
+    score: s.score - witness_laziness_penalty()
+  })
+}
+
+fn record_witness_pass(rep_state, witness_node_id, claim_space) {
+  rep.record_pass(rep_state, witness_node_id, claim_space)
+}
+
+fn penalize_all_witnesses(rep_state, witness_node_ids, claim_space) {
+  list.fold(witness_node_ids, rep_state, fn(r, wid) {
+    record_witness_negligence(r, wid, claim_space)
+  })
+}
+
+fn duty_weight(rep_state, node_id, claim_space) {
+  rep.witness_weight(rep_state, node_id, claim_space)
+}
+
+fn witness_faster_floor(rep_state, witness_node_id, publisher_node_id, claim_space) {
+  let ws = rep.get_score(rep_state, witness_node_id, claim_space) in
+  let ps = rep.get_score(rep_state, publisher_node_id, claim_space) in
+  ws.score <= ps.score
+}
+
+export { publisher_penalty, witness_negligence_penalty, witness_laziness_penalty, record_publisher_challenge, record_witness_negligence, record_witness_laziness, record_witness_pass, penalize_all_witnesses, duty_weight, witness_faster_floor }

@@ -1,0 +1,70 @@
+import("../src/witness_duty") as duty
+import("../src/reputation") as rep
+
+test "witness negligence penalty is steeper than publisher penalty" {
+  duty.witness_negligence_penalty() > duty.publisher_penalty()
+}
+
+test "witness laziness penalty is steeper than publisher penalty" {
+  duty.witness_laziness_penalty() > duty.publisher_penalty()
+}
+
+test "publisher challenge applies publisher penalty" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_publisher_challenge(r0, "publisher-a", "econ.space") in
+  let s = rep.get_score(r1, "publisher-a", "econ.space") in
+  s.score == -1 && s.failures == 1
+}
+
+test "witness negligence applies steeper penalty than publisher" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_publisher_challenge(r0, "publisher-a", "econ.space") in
+  let r2 = duty.record_witness_negligence(r1, "witness-w", "econ.space") in
+  let ps = rep.get_score(r2, "publisher-a", "econ.space") in
+  let ws = rep.get_score(r2, "witness-w", "econ.space") in
+  ws.score < ps.score
+}
+
+test "witness laziness applies steeper penalty than publisher" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_publisher_challenge(r0, "publisher-a", "econ.space") in
+  let r2 = duty.record_witness_laziness(r1, "witness-w", "econ.space") in
+  let ps = rep.get_score(r2, "publisher-a", "econ.space") in
+  let ws = rep.get_score(r2, "witness-w", "econ.space") in
+  ws.score < ps.score
+}
+
+test "witness floors at zero weight faster than publisher" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_publisher_challenge(r0, "publisher-a", "econ.space") in
+  let r2 = duty.record_witness_negligence(r1, "witness-w", "econ.space") in
+  duty.witness_faster_floor(r2, "witness-w", "publisher-a", "econ.space")
+}
+
+test "penalize all witnesses applies negligence to each" {
+  let r0 = rep.empty() in
+  let r1 = duty.penalize_all_witnesses(r0, ["witness-a", "witness-b", "witness-c"], "econ.space") in
+  let sa = rep.get_score(r1, "witness-a", "econ.space") in
+  let sb = rep.get_score(r1, "witness-b", "econ.space") in
+  let sc = rep.get_score(r1, "witness-c", "econ.space") in
+  sa.score == -3 && sb.score == -3 && sc.score == -3
+}
+
+test "witness pass increases weight" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_witness_pass(r0, "witness-w", "econ.space") in
+  let r2 = duty.record_witness_pass(r1, "witness-w", "econ.space") in
+  duty.duty_weight(r2, "witness-w", "econ.space") == 3
+}
+
+test "negligent witness weight floors at zero" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_witness_negligence(r0, "witness-w", "econ.space") in
+  duty.duty_weight(r1, "witness-w", "econ.space") == 0
+}
+
+test "cross space duty is isolated" {
+  let r0 = rep.empty() in
+  let r1 = duty.record_witness_negligence(r0, "witness-w", "econ.space") in
+  duty.duty_weight(r1, "witness-w", "crypto.space") == 1
+}
