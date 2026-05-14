@@ -1,0 +1,77 @@
+import("../src/archive") as archive
+import("../src/node") as node
+import("../src/registry") as reg
+import("../src/origin") as origin
+import("std/list") as list
+
+test "archive starts empty" {
+  let a = archive.archive_empty() in
+  archive.snapshot_count(a) == 0 && archive.registry_version_count(a) == 0
+}
+
+test "store snapshot preserves node state" {
+  let n = node.new_node("archive-node") in
+  let pub = node.publish(n, "test.space", "s", "p", "o", [], 100) in
+  let a = archive.archive_empty() in
+  let result = archive.store_snapshot(a, pub.node, "after-publish", 100) in
+  archive.snapshot_count(result.archive) == 1
+}
+
+test "snapshot digest is stable" {
+  let n = node.new_node("archive-node") in
+  let a = archive.archive_empty() in
+  let r1 = archive.store_snapshot(a, n, "label", 100) in
+  let r2 = archive.store_snapshot(a, n, "label", 100) in
+  r1.snapshot_digest_hex == r2.snapshot_digest_hex
+}
+
+test "store registry version preserves registry" {
+  let n = node.new_node("archive-origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let a = archive.archive_empty() in
+  let result = archive.store_registry_version(a, g.registry, 1000) in
+  archive.registry_version_count(result.archive) == 1 && archive.has_registry_version(result.archive, result.registry_digest_hex)
+}
+
+test "claim trail records published event" {
+  let n = node.new_node("archive-node") in
+  let pub = node.publish(n, "test.space", "s", "p", "o", [], 100) in
+  let a = archive.archive_empty() in
+  let a2 = archive.record_claim_trail(a, pub.envelope.digest_hex, "published", { issuer: n.node_id }, 100) in
+  let trail = archive.get_claim_trail(a2, pub.envelope.digest_hex) in
+  list.len(trail) == 1 && trail[0].event_kind == "published"
+}
+
+test "claim trail accumulates multiple events" {
+  let n = node.new_node("archive-node") in
+  let pub = node.publish(n, "test.space", "s", "p", "o", [], 100) in
+  let a = archive.archive_empty() in
+  let a2 = archive.record_claim_trail(a, pub.envelope.digest_hex, "published", {}, 100) in
+  let a3 = archive.record_claim_trail(a2, pub.envelope.digest_hex, "witnessed", { witness: "sha256:abc" }, 101) in
+  let a4 = archive.record_claim_trail(a3, pub.envelope.digest_hex, "challenged", { kind: "MissingEvidenceRef" }, 102) in
+  let history = archive.reconstruct_claim_history(a4, pub.envelope.digest_hex) in
+  history.reconstructable && history.published_count == 1 && history.witness_count == 1 && history.challenge_count == 1
+}
+
+test "reconstruction fails for unknown digest" {
+  let a = archive.archive_empty() in
+  let history = archive.reconstruct_claim_history(a, "sha256:unknown") in
+  !history.reconstructable && list.len(history.trail) == 0
+}
+
+test "receipt log accumulates entries" {
+  let a = archive.archive_empty() in
+  let a2 = archive.log_receipt(a, { kind: "publish", digest_hex: "sha256:abc", timestamp: 100 }) in
+  let a3 = archive.log_receipt(a2, { kind: "witness", digest_hex: "sha256:abc", timestamp: 101 }) in
+  list.len(a3.receipt_log) == 2
+}
+
+test "multiple registry versions stored independently" {
+  let n = node.new_node("archive-origin") in
+  let g1 = origin.boot_genesis(n, 1000) in
+  let g2 = origin.boot_with_default_spaces(n, 1001) in
+  let a = archive.archive_empty() in
+  let r1 = archive.store_registry_version(a, g1.registry, 1000) in
+  let r2 = archive.store_registry_version(r1.archive, g2.registry, 1001) in
+  archive.registry_version_count(r2.archive) == 2
+}

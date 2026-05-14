@@ -1,0 +1,104 @@
+import("std/json") as json
+import("std/rec") as rec
+import("std/list") as list
+import("std/hash") as hash
+import("std/str") as str
+import("canonical") as canon
+import("store") as store
+import("registry") as reg
+
+fn archive_empty() {
+  {
+    snapshots: {},
+    registry_versions: {},
+    claim_trails: {},
+    receipt_log: []
+  }
+}
+
+fn archive_digest(obj) {
+  canon.digest_text(json.canonicalize(obj))
+}
+
+fn store_snapshot(archive, node, label, timestamp_unix_secs) {
+  let snap = store.snapshot_node(node) in
+  let snap_digest = store.snapshot_digest(snap) in
+  let entry = {
+    label: label,
+    snapshot: snap,
+    snapshot_digest_hex: snap_digest,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  {
+    archive: { ...archive, snapshots: rec.set(archive.snapshots, snap_digest, entry) },
+    snapshot_digest_hex: snap_digest
+  }
+}
+
+fn store_registry_version(archive, registry, timestamp_unix_secs) {
+  let registry_digest = reg.digest(registry) in
+  let entry = {
+    registry: registry,
+    registry_digest_hex: registry_digest,
+    version: registry.version,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  {
+    archive: { ...archive, registry_versions: rec.set(archive.registry_versions, registry_digest, entry) },
+    registry_digest_hex: registry_digest
+  }
+}
+
+fn record_claim_trail(archive, digest_hex, event_kind, event_data, timestamp_unix_secs) {
+  let existing = rec.getOr(archive.claim_trails, digest_hex, []) in
+  let event = {
+    event_kind: event_kind,
+    event_data: event_data,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  let updated = list.append(existing, event) in
+  { ...archive, claim_trails: rec.set(archive.claim_trails, digest_hex, updated) }
+}
+
+fn get_claim_trail(archive, digest_hex) {
+  rec.getOr(archive.claim_trails, digest_hex, [])
+}
+
+fn log_receipt(archive, receipt) {
+  let receipt_digest = archive_digest(receipt) in
+  let entry = { receipt: receipt, receipt_digest_hex: receipt_digest } in
+  { ...archive, receipt_log: list.append(archive.receipt_log, entry) }
+}
+
+fn reconstruct_claim_history(archive, digest_hex) {
+  let trail = get_claim_trail(archive, digest_hex) in
+  let published = list.filter(trail, fn(e) { e.event_kind == "published" }) in
+  let witnessed = list.filter(trail, fn(e) { e.event_kind == "witnessed" }) in
+  let challenged = list.filter(trail, fn(e) { e.event_kind == "challenged" }) in
+  {
+    digest_hex: digest_hex,
+    trail: trail,
+    published_count: list.len(published),
+    witness_count: list.len(witnessed),
+    challenge_count: list.len(challenged),
+    reconstructable: list.len(published) > 0
+  }
+}
+
+fn snapshot_count(archive) {
+  list.len(rec.keys(archive.snapshots))
+}
+
+fn registry_version_count(archive) {
+  list.len(rec.keys(archive.registry_versions))
+}
+
+fn has_registry_version(archive, registry_digest_hex) {
+  rec.has(archive.registry_versions, registry_digest_hex)
+}
+
+fn get_registry_version(archive, registry_digest_hex) {
+  rec.get(archive.registry_versions, registry_digest_hex)
+}
+
+export { archive_empty, archive_digest, store_snapshot, store_registry_version, record_claim_trail, get_claim_trail, log_receipt, reconstruct_claim_history, snapshot_count, registry_version_count, has_registry_version, get_registry_version }
