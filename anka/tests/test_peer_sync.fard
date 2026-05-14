@@ -1,0 +1,28 @@
+import("../src/node") as node
+import("../src/transport") as transport
+import("../src/peer_sync") as sync
+
+test "sync plan identifies missing digest" {
+  let a = node.new_node("A") in
+  let b = node.new_node("B") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let plan = sync.sync_plan(pub.node, b) in
+  plan.count == 1 && plan.missing_digests[0] == pub.envelope.digest_hex
+}
+
+test "sync claims once fetches and accepts missing envelope" {
+  let a = node.new_node("A") in
+  let b = node.new_node("B") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let rx = sync.sync_claims_once(pub.node, b, pub.node.node_secret) in
+  rx.payload_count == 1 && node.has_claim(rx.node, pub.envelope.digest_hex)
+}
+
+test "gossip all once sends known digest over signed wire" {
+  let a = node.new_node("A") in
+  let b = node.new_node("B") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub.node.node_id, pub.node.node_secret)) in
+  let rx = sync.gossip_all_once(pub.node, b, book, 2) in
+  rx.accepted_count == 1 && node.node_summary(rx.node).known_digest_count == 1
+}
