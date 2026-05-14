@@ -140,9 +140,9 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Status
 
-65 tests. 1,633 lines of Fard. Two live nodes exchanging verified claims over the wire.
+73 tests. 1,697 lines of Fard. Two live nodes exchanging verified claims over the wire.
 
-The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims, persistent live processes, and a real two-node mesh with outbound gossip broadcast.
+The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims with independent execution verification, persistent live processes, and a real two-node mesh with outbound gossip broadcast.
 
 # License
 
