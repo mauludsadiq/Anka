@@ -1,0 +1,68 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("canonical") as canon
+
+fn make_relation(from_digest_hex, to_digest_hex, relation_type, evidence) {
+  {
+    from_digest_hex: from_digest_hex,
+    to_digest_hex: to_digest_hex,
+    relation_type: relation_type,
+    evidence: evidence
+  }
+}
+
+fn relation_valid(rel) {
+  rel.relation_type == "contradiction" || rel.relation_type == "support" || rel.relation_type == "equivalence"
+}
+
+fn same_subject(envelope, claim_space, subject) {
+  envelope.claim.claim_space == claim_space && envelope.claim.subject == subject
+}
+
+fn collect_claims(envelopes, claim_space, subject) {
+  list.filter(envelopes, fn(env) { same_subject(env, claim_space, subject) })
+}
+
+fn claim_set_id(claim_space, subject, claim_digests) {
+  canon.digest_text(json.canonicalize({
+    claim_space: claim_space,
+    subject: subject,
+    claim_digests: claim_digests
+  }))
+}
+
+fn assemble(claim_space, subject, envelopes, relations) {
+  let selected = collect_claims(envelopes, claim_space, subject) in
+  let digests = list.map(selected, fn(env) { env.digest_hex }) in
+  let valid_relations = list.filter(relations, fn(r) { relation_valid(r) }) in
+  {
+    claim_set_id: claim_set_id(claim_space, subject, digests),
+    claim_space: claim_space,
+    subject: subject,
+    claims: selected,
+    claim_digests: digests,
+    relations: valid_relations,
+    claim_count: list.len(selected),
+    relation_count: list.len(valid_relations)
+  }
+}
+
+fn local_collapse(claim_set, mode) {
+  if mode == "single-winner" then
+    {
+      mode: mode,
+      plural: false,
+      winner_digest_hex: if claim_set.claim_count > 0 then claim_set.claim_digests[0] else null,
+      retained_digests: if claim_set.claim_count > 0 then [claim_set.claim_digests[0]] else []
+    }
+  else
+    {
+      mode: "plural",
+      plural: true,
+      winner_digest_hex: null,
+      retained_digests: claim_set.claim_digests
+    }
+}
+
+export { make_relation, relation_valid, same_subject, collect_claims, claim_set_id, assemble, local_collapse }

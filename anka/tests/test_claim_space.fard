@@ -1,0 +1,45 @@
+import("../src/claim_space") as space
+import("../src/claim") as claim
+
+test "register invariant claim space" {
+  let r0 = space.registry_empty() in
+  let s = space.make_claim_space("block_validity", "invariant", "single", "deterministic block validity claims") in
+  let r1 = space.register(r0, s) in
+  r1.accepted == true && space.has_space(r1.registry, "block_validity")
+}
+
+test "reject invalid claim space category" {
+  let r0 = space.registry_empty() in
+  let s = space.make_claim_space("bad", "unknown", "single", "bad category") in
+  let r1 = space.register(r0, s) in
+  r1.accepted == false && space.has_space(r1.registry, "bad") == false
+}
+
+test "bind claim to registered claim space" {
+  let r0 = space.registry_empty() in
+  let s = space.make_claim_space("economic_models_2026", "interpretive", "plural", "economic model claims") in
+  let r1 = space.register(r0, s) in
+  let c = claim.make_claim("economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], "issuer", 1) in
+  let b = space.bind_claim(r1.registry, c) in
+  b.accepted == true && b.claim.claim_space_digest_hex == r1.space_digest_hex
+}
+
+test "unregistered claim space is rejected" {
+  let r0 = space.registry_empty() in
+  let c = claim.make_claim("missing_space", "S", "P", "O", [], "issuer", 1) in
+  let b = space.bind_claim(r0, c) in
+  b.accepted == false && b.object_id == "unregistered"
+}
+
+test "same subject in different spaces does not collide" {
+  let r0 = space.registry_empty() in
+  let s1 = space.make_claim_space("space_a", "interpretive", "plural", "A") in
+  let s2 = space.make_claim_space("space_b", "interpretive", "plural", "B") in
+  let r1 = space.register(r0, s1) in
+  let r2 = space.register(r1.registry, s2) in
+  let c1 = claim.make_claim("space_a", "same_subject", "p", "o", [], "issuer", 1) in
+  let c2 = claim.make_claim("space_b", "same_subject", "p", "o", [], "issuer", 1) in
+  let b1 = space.bind_claim(r2.registry, c1) in
+  let b2 = space.bind_claim(r2.registry, c2) in
+  b1.object_id != b2.object_id
+}

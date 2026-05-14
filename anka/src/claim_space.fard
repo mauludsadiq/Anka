@@ -1,0 +1,83 @@
+import("std/json") as json
+import("std/type") as type
+import("std/rec") as rec
+import("std/str") as str
+import("canonical") as canon
+
+fn make_claim_space(name, category, convergence_policy, description) {
+  {
+    name: name,
+    category: category,
+    convergence_policy: convergence_policy,
+    description: description
+  }
+}
+
+fn schema_valid(space) {
+  type.of(space) == "record" &&
+  rec.has(space, "name") &&
+  rec.has(space, "category") &&
+  rec.has(space, "convergence_policy") &&
+  rec.has(space, "description") &&
+  type.of(space.name) == "text" &&
+  type.of(space.category) == "text" &&
+  type.of(space.convergence_policy) == "text" &&
+  type.of(space.description) == "text" &&
+  (space.category == "invariant" || space.category == "interpretive")
+}
+
+fn digest_space(space) {
+  canon.digest_text(json.canonicalize(space))
+}
+
+fn registry_empty() {
+  {}
+}
+
+fn register(registry, space) {
+  let ok = schema_valid(space) in
+  let d = if ok then digest_space(space) else "invalid" in
+  {
+    accepted: ok,
+    registry: if ok then rec.set(registry, space.name, { space: space, space_digest_hex: d }) else registry,
+    space_digest_hex: d
+  }
+}
+
+fn has_space(registry, name) {
+  rec.has(registry, name)
+}
+
+fn get_space(registry, name) {
+  rec.get(registry, name)
+}
+
+fn claim_object_id(space_digest_hex, subject, predicate, object) {
+  canon.digest_text(json.canonicalize({
+    space_digest_hex: space_digest_hex,
+    subject: subject,
+    predicate: predicate,
+    object: object
+  }))
+}
+
+fn bind_claim(registry, claim) {
+  let exists = has_space(registry, claim.claim_space) in
+  if exists then
+    let entry = get_space(registry, claim.claim_space) in
+    {
+      accepted: true,
+      space_digest_hex: entry.space_digest_hex,
+      object_id: claim_object_id(entry.space_digest_hex, claim.subject, claim.predicate, claim.object),
+      claim: { ...claim, claim_space_digest_hex: entry.space_digest_hex }
+    }
+  else
+    {
+      accepted: false,
+      space_digest_hex: "unregistered",
+      object_id: "unregistered",
+      claim: claim
+    }
+}
+
+export { make_claim_space, schema_valid, digest_space, registry_empty, register, has_space, get_space, claim_object_id, bind_claim }

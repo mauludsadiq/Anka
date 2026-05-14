@@ -1,0 +1,37 @@
+import("../src/node") as node
+import("../src/claim_set") as cset
+
+test "claim set assembles competing claims under same subject" {
+  let a = node.new_node("A") in
+  let p1 = node.publish(a, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], 1) in
+  let p2 = node.publish(p1.node, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "1.8", [], 2) in
+  let cs = cset.assemble("economic_models_2026", "US_GDP_Q3_2026", [p1.envelope, p2.envelope], []) in
+  cs.claim_count == 2 && cs.claim_digests[0] != cs.claim_digests[1]
+}
+
+test "claim set supports contradiction relation" {
+  let a = node.new_node("A") in
+  let p1 = node.publish(a, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], 1) in
+  let p2 = node.publish(p1.node, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "1.8", [], 2) in
+  let rel = cset.make_relation(p1.envelope.digest_hex, p2.envelope.digest_hex, "contradiction", "different forecast values") in
+  let cs = cset.assemble("economic_models_2026", "US_GDP_Q3_2026", [p1.envelope, p2.envelope], [rel]) in
+  cs.relation_count == 1 && cs.relations[0].relation_type == "contradiction"
+}
+
+test "plural local collapse keeps competing digests" {
+  let a = node.new_node("A") in
+  let p1 = node.publish(a, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], 1) in
+  let p2 = node.publish(p1.node, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "1.8", [], 2) in
+  let cs = cset.assemble("economic_models_2026", "US_GDP_Q3_2026", [p1.envelope, p2.envelope], []) in
+  let collapse = cset.local_collapse(cs, "plural") in
+  collapse.plural == true && collapse.winner_digest_hex == null && collapse.retained_digests[1] == p2.envelope.digest_hex
+}
+
+test "single winner local collapse chooses first digest deterministically" {
+  let a = node.new_node("A") in
+  let p1 = node.publish(a, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], 1) in
+  let p2 = node.publish(p1.node, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "1.8", [], 2) in
+  let cs = cset.assemble("economic_models_2026", "US_GDP_Q3_2026", [p1.envelope, p2.envelope], []) in
+  let collapse = cset.local_collapse(cs, "single-winner") in
+  collapse.plural == false && collapse.winner_digest_hex == p1.envelope.digest_hex
+}
