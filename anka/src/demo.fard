@@ -1,44 +1,155 @@
 import("std/json") as json
 import("std/rec") as rec
+import("std/list") as list
 import("node") as node
+import("claim_space") as space
+import("claim_set") as cset
+import("reputation") as rep
+import("semantic_challenge") as sem
 
-let a0 = node.new_node("node-A")
-let b0 = node.new_node("node-B")
-let c0 = node.new_node("node-C")
+let node_a0 = node.new_node("forecast-node-A")
+let node_b0 = node.new_node("forecast-node-B")
+let node_c0 = node.new_node("challenge-node-C")
+let node_d0 = node.new_node("collapse-node-D")
 
-let pub = node.publish(
-  a0,
-  "anka.layer1.demo",
-  "claim:001",
-  "states",
-  "ANKA layer 1 transports canonical claim objects by digest",
-  [],
-  1775710735
+let registry0 = space.registry_empty()
+let econ_space = space.make_claim_space(
+  "economic_models_2026",
+  "interpretive",
+  "plural",
+  "Interpretive economic forecast claims for 2026"
+)
+let registered = space.register(registry0, econ_space)
+let registry1 = registered.registry
+
+let pub_a = node.publish(
+  node_a0,
+  "economic_models_2026",
+  "US_GDP_Q3_2026",
+  "forecast_growth",
+  "2.3",
+  ["labor_data:v1", "consumer_spending:v1"],
+  1775710801
 )
 
-let a1 = pub.node
-let gossip_msg = pub.gossip
-let b1 = node.receive_gossip(b0, gossip_msg)
-let fetched = node.fetch_claim(a1, gossip_msg.digest_hex)
-let accepted = node.accept_envelope(b1, fetched, a1.node_secret)
-let b2 = accepted.node
-let wit = node.structurally_witness(b2, fetched, a1.node_secret, 1775710736)
-let b3 = wit.node
-let c1 = node.receive_gossip(c0, gossip_msg)
-let c2 = node.receive_witness(c1, wit.witness)
-let ch = node.file_challenge(c2, gossip_msg.digest_hex, "MissingEvidenceRef", "demo structural challenge: no external evidence refs supplied", 1775710737)
-let c3 = ch.node
-let a2 = node.receive_challenge(a1, ch.challenge)
-let b4 = node.sync_from(b3, c3)
+let pub_b = node.publish(
+  node_b0,
+  "economic_models_2026",
+  "US_GDP_Q3_2026",
+  "forecast_growth",
+  "1.8",
+  ["labor_data:v1", "credit_conditions:v2"],
+  1775710802
+)
+
+let bind_a = space.bind_claim(registry1, pub_a.envelope.claim)
+let bind_b = space.bind_claim(registry1, pub_b.envelope.claim)
+
+let node_c1 = node.receive_gossip(node_c0, pub_a.gossip)
+let node_c2 = node.receive_gossip(node_c1, pub_b.gossip)
+
+let accept_a = node.accept_envelope(node_c2, pub_a.envelope, pub_a.node.node_secret)
+let accept_b = node.accept_envelope(accept_a.node, pub_b.envelope, pub_b.node.node_secret)
+
+let wit_a = node.structurally_witness(accept_b.node, pub_a.envelope, pub_a.node.node_secret, 1775710803)
+let wit_b = node.structurally_witness(wit_a.node, pub_b.envelope, pub_b.node.node_secret, 1775710804)
+
+let relation = cset.make_relation(
+  pub_a.envelope.digest_hex,
+  pub_b.envelope.digest_hex,
+  "contradiction",
+  "same subject and predicate with different forecast values"
+)
+
+let claim_set = cset.assemble(
+  "economic_models_2026",
+  "US_GDP_Q3_2026",
+  [pub_a.envelope, pub_b.envelope],
+  [relation]
+)
+
+let plural_collapse = cset.local_collapse(claim_set, "plural")
+let single_collapse = cset.local_collapse(claim_set, "single-winner")
+
+let sem_challenge = sem.make_semantic_challenge(
+  pub_a.envelope.digest_hex,
+  node_c0,
+  "economic_models_2026",
+  "semantic_counter_evidence",
+  "missing alternate credit tightening model",
+  1775710805
+)
+
+let reputation0 = rep.empty()
+let reputation1 = rep.record_pass(reputation0, wit_a.witness.witness_node_id, "economic_models_2026")
+let reputation2 = rep.record_pass(reputation1, wit_b.witness.witness_node_id, "economic_models_2026")
+let challenge_resolution = sem.resolve(
+  registry1,
+  reputation2,
+  pub_a.node.node_id,
+  "economic_models_2026",
+  sem_challenge,
+  true
+)
 
 {
   ok: true,
-  invariant: "accepted envelope requires sha256(canonical_claim) == digest",
-  published_digest: gossip_msg.digest_hex,
-  node_a: node.node_summary(a2),
-  node_b: node.node_summary(b4),
-  node_c: node.node_summary(c3),
-  verification_report: accepted.report,
-  witness: wit.witness,
-  challenge: ch.challenge
+  scenario: "ANKA enhanced demo: interpretive claim-space with structured divergence",
+  claim_space: {
+    registered: registered.accepted,
+    name: econ_space.name,
+    category: econ_space.category,
+    convergence_policy: econ_space.convergence_policy,
+    space_digest_hex: registered.space_digest_hex
+  },
+  competing_claims: [
+    {
+      issuer_node_id: pub_a.node.node_id,
+      digest_hex: pub_a.envelope.digest_hex,
+      object_id: bind_a.object_id,
+      subject: pub_a.envelope.claim.subject,
+      value: pub_a.envelope.claim.object,
+      evidence_refs: pub_a.envelope.claim.evidence_refs
+    },
+    {
+      issuer_node_id: pub_b.node.node_id,
+      digest_hex: pub_b.envelope.digest_hex,
+      object_id: bind_b.object_id,
+      subject: pub_b.envelope.claim.subject,
+      value: pub_b.envelope.claim.object,
+      evidence_refs: pub_b.envelope.claim.evidence_refs
+    }
+  ],
+  witnesses: [
+    {
+      witness_node_id: wit_a.witness.witness_node_id,
+      digest_hex: wit_a.witness.digest_hex,
+      weight: rep.witness_weight(challenge_resolution.reputation, wit_a.witness.witness_node_id, "economic_models_2026")
+    },
+    {
+      witness_node_id: wit_b.witness.witness_node_id,
+      digest_hex: wit_b.witness.digest_hex,
+      weight: rep.witness_weight(challenge_resolution.reputation, wit_b.witness.witness_node_id, "economic_models_2026")
+    }
+  ],
+  semantic_challenge: {
+    challenge: sem_challenge,
+    resolution_rule: challenge_resolution.rule,
+    outcome: challenge_resolution.outcome
+  },
+  claim_set: claim_set,
+  local_collapses: {
+    plural_node_policy: plural_collapse,
+    single_winner_node_policy: single_collapse
+  },
+  reputation_effects: {
+    challenger_score: rep.get_score(challenge_resolution.reputation, node_c0.node_id, "economic_models_2026"),
+    challenged_score: rep.get_score(challenge_resolution.reputation, pub_a.node.node_id, "economic_models_2026")
+  },
+  node_summaries: {
+    node_a: node.node_summary(pub_a.node),
+    node_b: node.node_summary(pub_b.node),
+    witness_node_c: node.node_summary(wit_b.node),
+    collapse_node_d: node.node_summary(node_d0)
+  }
 }
