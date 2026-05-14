@@ -216,7 +216,7 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Current Status
 
-53 tests passing, plus an enhanced interpretive mesh demo. 1,272 lines of Fard across 23 source files.
+53 tests passing, plus an enhanced interpretive mesh demo. 1,452 lines of Fard across 25 source files.
 
 - Multi-node canonical object propagation live
 - Signed message layer live
@@ -235,7 +235,8 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 - Executable and inference claims: signed, verified, tamper-evident, convertible to standard claims
 - Simulation deterministic: same scenario produces identical digests across runs
 - Enhanced demo shows interpretive divergence, witnesses, challenge, local collapse policies, and reputation effects
+- Live node process: HTTP server with SQLite-backed persistent state, survives restarts
 
-Next layers:
+# License
 
-- Add live multi-node processes
+MUI
