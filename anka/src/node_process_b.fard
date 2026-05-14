@@ -7,9 +7,9 @@ import("std/sqlite") as sqlite
 import("node") as node
 import("node_server") as server
 
-let port = 18080
-let node_name = "anka-node"
-let db_path = "file:out/node/anka_node.db?cache=shared&mode=rwc"
+let port = 18081
+let node_name = "anka-node-b"
+let db_path = "file:out/node/anka_node_b.db?cache=shared&mode=rwc"
 
 let db = sqlite.open(db_path)
 let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")

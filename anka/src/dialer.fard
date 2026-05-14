@@ -1,0 +1,28 @@
+import("std/http") as http
+import("std/json") as json
+import("std/list") as list
+import("std/str") as str
+
+fn push_gossip(peer_address, gossip_payload) {
+  let body = json.encode(gossip_payload) in
+  let result = http.post(str.concat([peer_address, "/gossip"]), body) in
+  { ok: result.status == 200, status: result.status, address: peer_address }
+}
+
+fn push_witness(peer_address, witness_payload) {
+  let body = json.encode(witness_payload) in
+  let result = http.post(str.concat([peer_address, "/witness"]), body) in
+  { ok: result.status == 200, status: result.status, address: peer_address }
+}
+
+fn push_challenge(peer_address, challenge_payload) {
+  let body = json.encode(challenge_payload) in
+  let result = http.post(str.concat([peer_address, "/challenge"]), body) in
+  { ok: result.status == 200, status: result.status, address: peer_address }
+}
+
+fn broadcast_gossip(peer_addresses, gossip_payload) {
+  list.map(peer_addresses, fn(addr) { push_gossip(addr, gossip_payload) })
+}
+
+export { push_gossip, push_witness, push_challenge, broadcast_gossip }
