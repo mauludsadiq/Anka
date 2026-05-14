@@ -1,0 +1,88 @@
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/rand") as rand
+import("node") as node
+import("claim_space") as space
+import("claim_set") as cset
+import("reputation") as rep
+
+fn run_scenario(scenario) {
+  let nodes = list.map(scenario.nodes, fn(n) {
+    { id: n.id, collapse_policy: n.collapse_policy, node: node.new_node_generated() }
+  }) in
+  let find_node_rec = fn(id) {
+    list.find(nodes, fn(n) { n.id == id }).some
+  } in
+  let registry0 = space.registry_empty() in
+  let registry1 = list.fold(scenario.claim_spaces, registry0, fn(reg, cs) {
+    let s = space.make_claim_space(cs.name, cs.category, cs.convergence_policy, cs.description) in
+    space.register(reg, s).registry
+  }) in
+  let publications = list.map(scenario.claims, fn(c) {
+    let issuer_rec = find_node_rec(c.issuer) in
+    let pub = node.publish(issuer_rec.node, c.claim_space, c.subject, c.predicate, c.object, c.evidence_refs, c.timestamp_unix_secs) in
+    { issuer_id: c.issuer, pub: pub }
+  }) in
+  let find_pub = fn(issuer_id) {
+    list.find(publications, fn(p) { p.issuer_id == issuer_id }).some.pub
+  } in
+  let reputation0 = rep.empty() in
+  let witness_results = list.map(scenario.witnesses, fn(w) {
+    let witness_rec = find_node_rec(w.witness) in
+    let target_pub = find_pub(w.target_issuer) in
+    let result = node.structurally_witness(witness_rec.node, target_pub.envelope, target_pub.node.node_secret, w.timestamp_unix_secs) in
+    { witness_id: w.witness, target_issuer: w.target_issuer, result: result }
+  }) in
+  let reputation1 = list.fold(witness_results, reputation0, fn(r, w) {
+    if w.result.accepted then
+      rep.record_pass(r, w.result.witness.witness_node_id, w.result.witness.digest_hex)
+    else
+      rep.record_failure(r, w.result.witness.witness_node_id, w.result.witness.digest_hex)
+  }) in
+  let challenge_results = list.map(scenario.challenges, fn(ch) {
+    let challenger_rec = find_node_rec(ch.challenger) in
+    let target_pub = find_pub(ch.target_issuer) in
+    let result = node.file_challenge(challenger_rec.node, target_pub.envelope.digest_hex, ch.kind, ch.evidence, ch.timestamp_unix_secs) in
+    { challenger_id: ch.challenger, target_issuer: ch.target_issuer, result: result }
+  }) in
+  {
+    ok: true,
+    scenario: scenario.name,
+    node_count: list.len(nodes),
+    claim_count: list.len(publications),
+    witness_count: list.len(witness_results),
+    challenge_count: list.len(challenge_results),
+    registry_ok: registry1 != null,
+    publications: list.map(publications, fn(p) {
+      {
+        issuer: p.issuer_id,
+        digest_hex: p.pub.envelope.digest_hex,
+        claim_space: p.pub.envelope.claim.claim_space,
+        subject: p.pub.envelope.claim.subject,
+        value: p.pub.envelope.claim.object
+      }
+    }),
+    witnesses: list.map(witness_results, fn(w) {
+      {
+        witness: w.witness_id,
+        target_issuer: w.target_issuer,
+        accepted: w.result.accepted,
+        digest_hex: if w.result.accepted then w.result.witness.digest_hex else null
+      }
+    }),
+    challenges: list.map(challenge_results, fn(ch) {
+      {
+        challenger: ch.challenger_id,
+        target_issuer: ch.target_issuer,
+        kind: ch.result.challenge.kind,
+        digest_hex: ch.result.challenge.target_digest_hex
+      }
+    }),
+    node_policies: list.map(nodes, fn(n) {
+      { id: n.id, collapse_policy: n.collapse_policy }
+    })
+  }
+}
+
+export { run_scenario }

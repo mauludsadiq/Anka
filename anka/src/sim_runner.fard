@@ -1,0 +1,7 @@
+import("std/json") as json
+import("std/io") as io
+import("sim") as sim
+
+let scenario = json.decode(io.read_file("anka/scenarios/scenario_econ_divergence.json").ok)
+let result = sim.run_scenario(scenario)
+result

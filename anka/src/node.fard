@@ -2,6 +2,7 @@ import("std/list") as list
 import("std/rec") as rec
 import("std/str") as str
 import("std/hash") as hash
+import("std/rand") as rand
 import("claim") as claim
 import("gossip") as gossip
 import("witness") as witness
@@ -110,4 +111,18 @@ fn node_summary(node) {
   }
 }
 
-export { new_node, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }
+
+fn new_node_generated() {
+  let secret = rand.uuid_v4() in
+  let node_id = hash.sha256_text(str.concat(["anka-node-id:", secret])) in
+  {
+    node_id: node_id,
+    node_secret: secret,
+    claims: {},
+    witnesses: {},
+    challenges: {},
+    known_digests: []
+  }
+}
+
+export { new_node, new_node_generated, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }
