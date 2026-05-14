@@ -1,6 +1,6 @@
 # ANKA
 
-A network substrate built for AI systems. Written in [FARD](https://github.com/mauludsadiq/FARD).
+A network substrate built for AI systems. Written in [Fard](https://github.com/mauludsadiq/FARD).
 
 -----
 
@@ -140,9 +140,9 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Status
 
-65 tests. 1,452 lines of Fard. Live nodes with persistent state.
+65 tests. 1,633 lines of Fard. Two live nodes exchanging verified claims over the wire.
 
-The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims, and persistent live processes.
+The substrate is complete: canonical identity, signed transport, scoped gossip, structural witnessing, semantic challenge, reputation-weighted collapse, partition-tolerant convergence, executable claims, persistent live processes, and a real two-node mesh with outbound gossip broadcast.
 
 # License
 
