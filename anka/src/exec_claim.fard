@@ -1,0 +1,100 @@
+import("std/json") as json
+import("std/type") as type
+import("std/rec") as rec
+import("std/str") as str
+import("std/list") as list
+import("canonical") as canon
+import("claim") as claim
+
+// exec_kind: "arithmetic" | "inference" | "threshold" | "derived"
+// expr: a string encoding the computation
+// input_refs: list of digest_hex values this computation depends on
+// result: the computed output value (stored as object in the wrapped claim)
+
+fn make_exec_claim(claim_space, subject, predicate, expr, exec_kind, input_refs, result, issuer_node_id, timestamp_unix_secs) {
+  {
+    claim_space: claim_space,
+    subject: subject,
+    predicate: predicate,
+    expr: expr,
+    exec_kind: exec_kind,
+    input_refs: input_refs,
+    result: result,
+    issuer_node_id: issuer_node_id,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn canonical_exec_claim(ec) {
+  json.canonicalize({
+    claim_space: ec.claim_space,
+    subject: ec.subject,
+    predicate: ec.predicate,
+    expr: ec.expr,
+    exec_kind: ec.exec_kind,
+    input_refs: ec.input_refs,
+    result: ec.result,
+    issuer_node_id: ec.issuer_node_id,
+    timestamp_unix_secs: ec.timestamp_unix_secs
+  })
+}
+
+fn digest_exec_claim(ec) {
+  canon.digest_text(canonical_exec_claim(ec))
+}
+
+fn sign_exec_claim(ec, issuer_secret) {
+  let digest_hex = digest_exec_claim(ec) in
+  let sig = canon.structural_signature(issuer_secret, digest_hex) in
+  {
+    exec_claim: ec,
+    digest_hex: digest_hex,
+    issuer_signature_hex: sig,
+    kind: "exec"
+  }
+}
+
+fn schema_valid_exec_claim(ec) {
+  type.of(ec) == "record" &&
+  rec.has(ec, "claim_space") &&
+  rec.has(ec, "subject") &&
+  rec.has(ec, "predicate") &&
+  rec.has(ec, "expr") &&
+  rec.has(ec, "exec_kind") &&
+  rec.has(ec, "input_refs") &&
+  rec.has(ec, "result") &&
+  rec.has(ec, "issuer_node_id") &&
+  rec.has(ec, "timestamp_unix_secs") &&
+  type.of(ec.expr) == "text" &&
+  type.of(ec.exec_kind) == "text" &&
+  type.of(ec.input_refs) == "list" &&
+  type.of(ec.result) == "text" &&
+  (ec.exec_kind == "arithmetic" || ec.exec_kind == "inference" || ec.exec_kind == "threshold" || ec.exec_kind == "derived")
+}
+
+fn verify_exec_envelope(envelope, issuer_secret) {
+  let schema_ok = schema_valid_exec_claim(envelope.exec_claim) in
+  let digest_ok = if schema_ok then digest_exec_claim(envelope.exec_claim) == envelope.digest_hex else false in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(issuer_secret, envelope.digest_hex, envelope.issuer_signature_hex) else false in
+  {
+    accepted: schema_ok && digest_ok && sig_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    signature_ok: sig_ok,
+    digest_hex: envelope.digest_hex
+  }
+}
+
+fn exec_claim_to_claim(ec) {
+  claim.make_claim(
+    ec.claim_space,
+    ec.subject,
+    ec.predicate,
+    ec.result,
+    ec.input_refs,
+    ec.issuer_node_id,
+    ec.timestamp_unix_secs
+  )
+}
+
+export { make_exec_claim, canonical_exec_claim, digest_exec_claim, sign_exec_claim, schema_valid_exec_claim, verify_exec_envelope, exec_claim_to_claim }

@@ -1,0 +1,92 @@
+import("../src/exec_claim") as exec
+import("../src/node") as node
+import("std/str") as str
+
+test "exec claim digest is canonical and stable" {
+  let n = node.new_node("exec-issuer") in
+  let ec = exec.make_exec_claim(
+    "compute.arithmetic",
+    "US_GDP_Q3_2026",
+    "weighted_mean_forecast",
+    "mean([2.3, 1.8])",
+    "arithmetic",
+    ["sha256:digest-a", "sha256:digest-b"],
+    "2.05",
+    n.node_id,
+    1775710900
+  ) in
+  let d1 = exec.digest_exec_claim(ec) in
+  let d2 = exec.digest_exec_claim(ec) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}
+
+test "exec claim signs and verifies" {
+  let n = node.new_node("exec-issuer") in
+  let ec = exec.make_exec_claim(
+    "compute.arithmetic",
+    "US_GDP_Q3_2026",
+    "weighted_mean_forecast",
+    "mean([2.3, 1.8])",
+    "arithmetic",
+    ["sha256:digest-a", "sha256:digest-b"],
+    "2.05",
+    n.node_id,
+    1775710900
+  ) in
+  let env = exec.sign_exec_claim(ec, n.node_secret) in
+  let report = exec.verify_exec_envelope(env, n.node_secret) in
+  report.accepted && report.digest_ok && report.signature_ok
+}
+
+test "tampered exec claim fails verification" {
+  let n = node.new_node("exec-issuer") in
+  let ec = exec.make_exec_claim(
+    "compute.arithmetic",
+    "US_GDP_Q3_2026",
+    "weighted_mean_forecast",
+    "mean([2.3, 1.8])",
+    "arithmetic",
+    ["sha256:digest-a", "sha256:digest-b"],
+    "2.05",
+    n.node_id,
+    1775710900
+  ) in
+  let env = exec.sign_exec_claim(ec, n.node_secret) in
+  let bad_ec = { ...env.exec_claim, result: "9.99" } in
+  let bad_env = { ...env, exec_claim: bad_ec } in
+  let report = exec.verify_exec_envelope(bad_env, n.node_secret) in
+  !report.accepted && !report.digest_ok
+}
+
+test "invalid exec kind fails schema validation" {
+  let n = node.new_node("exec-issuer") in
+  let ec = exec.make_exec_claim(
+    "compute.arithmetic",
+    "subject",
+    "predicate",
+    "mean([1,2])",
+    "unknown_kind",
+    [],
+    "1.5",
+    n.node_id,
+    1775710900
+  ) in
+  !exec.schema_valid_exec_claim(ec)
+}
+
+test "exec claim converts to standard claim" {
+  let n = node.new_node("exec-issuer") in
+  let ec = exec.make_exec_claim(
+    "compute.arithmetic",
+    "US_GDP_Q3_2026",
+    "weighted_mean_forecast",
+    "mean([2.3, 1.8])",
+    "arithmetic",
+    ["sha256:digest-a", "sha256:digest-b"],
+    "2.05",
+    n.node_id,
+    1775710900
+  ) in
+  let c = exec.exec_claim_to_claim(ec) in
+  c.object == "2.05" && c.subject == "US_GDP_Q3_2026" && c.claim_space == "compute.arithmetic"
+}
