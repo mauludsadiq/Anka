@@ -1,0 +1,35 @@
+import("../src/node") as node
+import("../src/claim_space") as space
+import("../src/registry") as registry
+
+test "registry genesis is deterministic for same node and timestamp" {
+  let n = node.new_node("genesis") in
+  let r1 = registry.genesis(n, 1) in
+  let r2 = registry.genesis(n, 1) in
+  registry.digest(r1) == registry.digest(r2)
+}
+
+test "registry adds claim space as versioned object" {
+  let n = node.new_node("genesis") in
+  let r0 = registry.genesis(n, 1) in
+  let sp = space.make_claim_space("economic_models_2026", "interpretive", "plural", "economic models") in
+  let r1 = registry.add_space(r0, sp, n, 2) in
+  r1.accepted == true && r1.registry.version == 1 && r1.registry.parent_registry_digest_hex == registry.digest(r0)
+}
+
+test "registry rejects invalid claim space without adding name" {
+  let n = node.new_node("genesis") in
+  let r0 = registry.genesis(n, 1) in
+  let sp = space.make_claim_space("bad_space", "bad_category", "plural", "bad") in
+  let r1 = registry.add_space(r0, sp, n, 2) in
+  r1.accepted == false && registry.has_space(r1.registry, "bad_space") == false
+}
+
+test "registry witness anchors registry digest" {
+  let n = node.new_node("genesis") in
+  let wnode = node.new_node("witness") in
+  let r0 = registry.genesis(n, 1) in
+  let w = registry.witness_registry(r0, wnode, 2) in
+  let r1 = registry.add_witness(r0, w) in
+  registry.snapshot(r1).witness_count == 1 && w.digest_hex == registry.digest(r0)
+}

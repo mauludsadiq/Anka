@@ -1,0 +1,76 @@
+import("std/json") as json
+import("std/rec") as rec
+import("std/list") as list
+import("std/hash") as hash
+import("claim_space") as space
+import("witness") as witness
+
+fn genesis(node, timestamp_unix_secs) {
+  {
+    version: 0,
+    parent_registry_digest_hex: null,
+    spaces: {},
+    witnesses: {},
+    timestamp_unix_secs: timestamp_unix_secs,
+    issuer_node_id: node.node_id
+  }
+}
+
+fn digest(registry) {
+  hash.sha256_text(json.canonicalize({
+    version: registry.version,
+    parent_registry_digest_hex: registry.parent_registry_digest_hex,
+    spaces: registry.spaces,
+    timestamp_unix_secs: registry.timestamp_unix_secs,
+    issuer_node_id: registry.issuer_node_id
+  }))
+}
+
+fn witness_registry(registry, node, timestamp_unix_secs) {
+  witness.make_witness(digest(registry), node.node_id, "registry_genesis", timestamp_unix_secs, node.node_secret)
+}
+
+fn add_space(registry, claim_space_obj, node, timestamp_unix_secs) {
+  let reg_add = space.register(registry.spaces, claim_space_obj) in
+  let next = {
+    version: registry.version + 1,
+    parent_registry_digest_hex: digest(registry),
+    spaces: reg_add.registry,
+    witnesses: registry.witnesses,
+    timestamp_unix_secs: timestamp_unix_secs,
+    issuer_node_id: node.node_id
+  } in
+  {
+    accepted: reg_add.accepted,
+    registry: next,
+    registry_digest_hex: digest(next),
+    space_digest_hex: reg_add.space_digest_hex
+  }
+}
+
+fn add_witness(registry, w) {
+  { ...registry, witnesses: rec.set(registry.witnesses, w.witness_node_id, w) }
+}
+
+fn known_spaces(registry) {
+  rec.keys(registry.spaces)
+}
+
+fn has_space(registry, name) {
+  rec.has(registry.spaces, name)
+}
+
+fn get_space(registry, name) {
+  rec.get(registry.spaces, name)
+}
+
+fn snapshot(registry) {
+  {
+    registry: registry,
+    registry_digest_hex: digest(registry),
+    known_spaces: known_spaces(registry),
+    witness_count: list.len(rec.keys(registry.witnesses))
+  }
+}
+
+export { genesis, digest, witness_registry, add_space, add_witness, known_spaces, has_space, get_space, snapshot }
