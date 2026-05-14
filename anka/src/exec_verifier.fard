@@ -1,0 +1,64 @@
+import("std/eval") as eval
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/type") as type
+import("node") as node
+import("exec_claim") as ec_mod
+import("canonical") as canon
+
+fn fetch_one_input(n, ref_digest) {
+  if node.has_claim(n, ref_digest) then
+    let env = node.fetch_claim(n, ref_digest) in
+    { ok: true, digest_ref: ref_digest, value: env.claim.object }
+  else
+    { ok: false, digest_ref: ref_digest, value: null }
+}
+
+fn fetch_inputs(n, input_refs) {
+  list.map(input_refs, fn(d) { fetch_one_input(n, d) })
+}
+
+fn all_inputs_available(inputs) {
+  list.all(inputs, fn(i) { i.ok })
+}
+
+fn substitute_one(expr, input) {
+  str.replace(expr, input.digest_ref, input.value)
+}
+
+fn substitute_inputs(expr, inputs) {
+  list.fold(inputs, expr, fn(acc, input) { substitute_one(acc, input) })
+}
+
+fn eval_expr(expr) {
+  let result = eval.eval(expr) in
+  { ok: true, value: str.from(result) }
+}
+
+fn results_match(computed, claimed) {
+  str.trim(computed) == str.trim(claimed)
+}
+
+fn verify_exec_claim(n, envelope, timestamp_unix_secs) {
+  let ec = envelope.exec_claim in
+  let schema_ok = ec_mod.schema_valid_exec_claim(ec) in
+  let inputs = if schema_ok then fetch_inputs(n, ec.input_refs) else [] in
+  let inputs_ok = if schema_ok then all_inputs_available(inputs) else false in
+  let substituted = if inputs_ok then substitute_inputs(ec.expr, inputs) else "" in
+  let eval_result = if inputs_ok then eval_expr(substituted) else { ok: false, value: null } in
+  let matched = if inputs_ok then results_match(eval_result.value, ec.result) else false in
+  {
+    verified: schema_ok && inputs_ok && matched,
+    reason: if !schema_ok then "invalid schema" else if !inputs_ok then "missing input refs" else if matched then "result verified" else "result mismatch",
+    schema_ok: schema_ok,
+    inputs_available: inputs_ok,
+    result_match: matched,
+    computed_value: eval_result.value,
+    claimed_value: ec.result,
+    expr_evaluated: substituted
+  }
+}
+
+export { fetch_inputs, fetch_one_input, all_inputs_available, substitute_inputs, eval_expr, results_match, verify_exec_claim }

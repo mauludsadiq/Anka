@@ -1,0 +1,61 @@
+import("../src/exec_verifier") as verifier
+import("../src/exec_claim") as ec_mod
+import("../src/node") as node
+import("std/str") as str
+import("std/list") as list
+
+test "eval expr computes arithmetic correctly" {
+  let result = verifier.eval_expr("(2.3 + 1.8) / 2") in
+  result.ok && result.value == "2.05"
+}
+
+test "results match when equal" {
+  verifier.results_match("2.05", "2.05")
+}
+
+test "results do not match when different" {
+  !verifier.results_match("2.05", "9.99")
+}
+
+test "fetch inputs returns values from node store" {
+  let n0 = node.new_node("exec-input-node") in
+  let pub = node.publish(n0, "compute.space", "GDP", "value", "2.3", [], 100) in
+  let inputs = verifier.fetch_inputs(pub.node, [pub.envelope.digest_hex]) in
+  list.len(inputs) == 1 && inputs[0].ok && inputs[0].value == "2.3"
+}
+
+test "fetch inputs marks missing ref as not ok" {
+  let n0 = node.new_node("exec-missing-node") in
+  let inputs = verifier.fetch_inputs(n0, ["sha256:doesnotexist"]) in
+  !inputs[0].ok
+}
+
+test "verify exec claim succeeds when result matches" {
+  let n0 = node.new_node("exec-verifier-a") in
+  let pub_a = node.publish(n0, "compute.space", "GDP_A", "value", "2.3", [], 100) in
+  let pub_b = node.publish(pub_a.node, "compute.space", "GDP_B", "value", "1.8", [], 101) in
+  let expr = str.concat(["(", pub_a.envelope.digest_hex, " + ", pub_b.envelope.digest_hex, ") / 2"]) in
+  let ec = ec_mod.make_exec_claim("compute.space", "GDP_mean", "weighted_mean", expr, "arithmetic", [pub_a.envelope.digest_hex, pub_b.envelope.digest_hex], "2.05", pub_b.node.node_id, 102) in
+  let envelope = ec_mod.sign_exec_claim(ec, pub_b.node.node_secret) in
+  let report = verifier.verify_exec_claim(pub_b.node, envelope, 103) in
+  report.verified && report.result_match && report.computed_value == "2.05"
+}
+
+test "verify exec claim fails when result is wrong" {
+  let n0 = node.new_node("exec-verifier-b") in
+  let pub_a = node.publish(n0, "compute.space", "GDP_A2", "value", "2.3", [], 100) in
+  let pub_b = node.publish(pub_a.node, "compute.space", "GDP_B2", "value", "1.8", [], 101) in
+  let expr = str.concat(["(", pub_a.envelope.digest_hex, " + ", pub_b.envelope.digest_hex, ") / 2"]) in
+  let ec = ec_mod.make_exec_claim("compute.space", "GDP_mean2", "weighted_mean", expr, "arithmetic", [pub_a.envelope.digest_hex, pub_b.envelope.digest_hex], "9.99", pub_b.node.node_id, 102) in
+  let envelope = ec_mod.sign_exec_claim(ec, pub_b.node.node_secret) in
+  let report = verifier.verify_exec_claim(pub_b.node, envelope, 103) in
+  !report.verified && report.computed_value == "2.05" && report.claimed_value == "9.99"
+}
+
+test "verify exec claim fails when input ref missing" {
+  let n0 = node.new_node("exec-verifier-c") in
+  let ec = ec_mod.make_exec_claim("compute.space", "GDP_missing", "weighted_mean", "sha256:missing + sha256:alsomissing", "arithmetic", ["sha256:missing", "sha256:alsomissing"], "2.05", n0.node_id, 100) in
+  let envelope = ec_mod.sign_exec_claim(ec, n0.node_secret) in
+  let report = verifier.verify_exec_claim(n0, envelope, 101) in
+  !report.verified && !report.inputs_available
+}
