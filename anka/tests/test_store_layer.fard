@@ -1,0 +1,27 @@
+import("../src/node") as node
+import("../src/store") as store
+
+test "store snapshots node state deterministically" {
+  let a = node.new_node("A") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let s1 = store.snapshot_node(pub.node) in
+  let s2 = store.snapshot_node(pub.node) in
+  store.snapshot_digest(s1) == store.snapshot_digest(s2)
+}
+
+test "store writes and reads snapshot" {
+  let a = node.new_node("A") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let w = store.write_snapshot("out/anka_store_test.json", pub.node) in
+  let s = store.read_snapshot("out/anka_store_test.json") in
+  w.ok == true && s.node_id == pub.node.node_id && store.snapshot_digest(s) == w.snapshot_digest_hex
+}
+
+test "store restores state into base node identity" {
+  let a = node.new_node("A") in
+  let base = node.new_node("A") in
+  let pub = node.publish(a, "demo", "s", "p", "o", [], 1) in
+  let snap = store.snapshot_node(pub.node) in
+  let restored = store.restore_node(base, snap) in
+  restored.node_id == base.node_id && node.node_summary(restored).claim_count == 1
+}

@@ -1,0 +1,62 @@
+import("std/json") as json
+import("std/rec") as rec
+import("std/list") as list
+import("std/fs") as fs
+import("std/path") as path
+
+fn empty_store() {
+  {
+    claims: {},
+    witnesses: {},
+    challenges: {},
+    known_digests: []
+  }
+}
+
+fn snapshot_node(node) {
+  {
+    node_id: node.node_id,
+    claims: node.claims,
+    witnesses: node.witnesses,
+    challenges: node.challenges,
+    known_digests: node.known_digests
+  }
+}
+
+import("std/hash") as hash
+
+fn snapshot_digest(snapshot) {
+  hash.sha256_text(json.canonicalize(snapshot))
+}
+
+fn write_snapshot(file_path, node) {
+  let snap = snapshot_node(node) in
+  let text = json.encode(snap) in
+  let _ = fs.write_text(file_path, text) in
+  {
+    ok: true,
+    path: file_path,
+    snapshot_digest_hex: snapshot_digest(snap)
+  }
+}
+
+fn read_snapshot(file_path) {
+  json.decode(fs.read_text(file_path))
+}
+
+fn restore_node(base_node, snapshot) {
+  {
+    node_id: base_node.node_id,
+    node_secret: base_node.node_secret,
+    claims: snapshot.claims,
+    witnesses: snapshot.witnesses,
+    challenges: snapshot.challenges,
+    known_digests: snapshot.known_digests
+  }
+}
+
+fn restore_from_file(base_node, file_path) {
+  restore_node(base_node, read_snapshot(file_path))
+}
+
+export { empty_store, snapshot_node, snapshot_digest, write_snapshot, read_snapshot, restore_node, restore_from_file }
