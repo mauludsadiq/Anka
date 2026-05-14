@@ -1,0 +1,56 @@
+import("std/list") as list
+import("std/rec") as rec
+import("reputation") as reputation
+
+fn zero_scores(claim_set) {
+  list.fold(claim_set.claim_digests, {}, fn(acc, d) {
+    rec.set(acc, d, 0)
+  })
+}
+
+fn add_weight(scores, digest_hex, weight) {
+  let current = rec.getOr(scores, digest_hex, 0) in
+  rec.set(scores, digest_hex, current + weight)
+}
+
+fn score_claims(claim_set, witnesses, rep) {
+  list.fold(witnesses, zero_scores(claim_set), fn(scores, w) {
+    let known = list.any(claim_set.claim_digests, fn(d) { d == w.digest_hex }) in
+    if known then
+      add_weight(scores, w.digest_hex, reputation.witness_weight(rep, w.witness_node_id, claim_set.claim_space))
+    else
+      scores
+  })
+}
+
+fn best_digest_from_scores(digests, scores) {
+  list.fold(digests, { digest_hex: null, score: -1 }, fn(best, d) {
+    let s = rec.getOr(scores, d, 0) in
+    if s > best.score then { digest_hex: d, score: s } else best
+  })
+}
+
+fn collapse(claim_set, witnesses, rep, mode) {
+  let scores = score_claims(claim_set, witnesses, rep) in
+  if mode == "single-winner" then
+    let best = best_digest_from_scores(claim_set.claim_digests, scores) in
+    {
+      mode: "single-winner",
+      plural: false,
+      scores: scores,
+      winner_digest_hex: best.digest_hex,
+      winner_score: best.score,
+      retained_digests: if best.digest_hex == null then [] else [best.digest_hex]
+    }
+  else
+    {
+      mode: "plural",
+      plural: true,
+      scores: scores,
+      winner_digest_hex: null,
+      winner_score: null,
+      retained_digests: claim_set.claim_digests
+    }
+}
+
+export { zero_scores, add_weight, score_claims, best_digest_from_scores, collapse }

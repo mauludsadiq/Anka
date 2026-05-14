@@ -1,0 +1,55 @@
+import("../src/node") as node
+import("../src/claim_set") as cset
+import("../src/reputation") as rep
+import("../src/weighted_collapse") as wc
+
+fn sample_claim_set() {
+  let a = node.new_node("A") in
+  let p1 = node.publish(a, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "2.3", [], 1) in
+  let p2 = node.publish(p1.node, "economic_models_2026", "US_GDP_Q3_2026", "forecast_growth", "1.8", [], 2) in
+  cset.assemble("economic_models_2026", "US_GDP_Q3_2026", [p1.envelope, p2.envelope], [])
+}
+
+test "weighted collapse sums witness weights by digest" {
+  let cs = sample_claim_set() in
+  let w1 = { digest_hex: cs.claim_digests[0], witness_node_id: "w1" } in
+  let w2 = { digest_hex: cs.claim_digests[0], witness_node_id: "w2" } in
+  let r0 = rep.empty() in
+  let scores = wc.score_claims(cs, [w1, w2], r0) in
+  scores[cs.claim_digests[0]] == 2
+}
+
+test "highest weight digest wins in single winner mode" {
+  let cs = sample_claim_set() in
+  let w1 = { digest_hex: cs.claim_digests[0], witness_node_id: "w1" } in
+  let w2 = { digest_hex: cs.claim_digests[1], witness_node_id: "w2" } in
+  let r0 = rep.empty() in
+  let r1 = rep.record_pass(rep.record_pass(r0, "w2", "economic_models_2026"), "w2", "economic_models_2026") in
+  let out = wc.collapse(cs, [w1, w2], r1, "single-winner") in
+  out.winner_digest_hex == cs.claim_digests[1] && out.winner_score == 3
+}
+
+test "plural mode retains all digests with scores" {
+  let cs = sample_claim_set() in
+  let w1 = { digest_hex: cs.claim_digests[0], witness_node_id: "w1" } in
+  let out = wc.collapse(cs, [w1], rep.empty(), "plural") in
+  out.plural == true && out.retained_digests[1] == cs.claim_digests[1] && out.scores[cs.claim_digests[0]] == 1
+}
+
+test "zero weight witnesses do not affect outcome" {
+  let cs = sample_claim_set() in
+  let w1 = { digest_hex: cs.claim_digests[0], witness_node_id: "w1" } in
+  let r0 = rep.empty() in
+  let r1 = rep.record_failure(r0, "w1", "economic_models_2026") in
+  let scores = wc.score_claims(cs, [w1], r1) in
+  scores[cs.claim_digests[0]] == 0
+}
+
+test "cross space reputation does not affect collapse" {
+  let cs = sample_claim_set() in
+  let w1 = { digest_hex: cs.claim_digests[0], witness_node_id: "w1" } in
+  let r0 = rep.empty() in
+  let r1 = rep.record_pass(rep.record_pass(r0, "w1", "crypto"), "w1", "crypto") in
+  let scores = wc.score_claims(cs, [w1], r1) in
+  scores[cs.claim_digests[0]] == 1
+}
