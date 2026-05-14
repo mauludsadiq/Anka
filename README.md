@@ -30,6 +30,8 @@ A digest is not a pointer to content. It *is* the content’s identity. The same
 
 **Explicit contestability.** The web has disagreement but no formal dispute layer. ANKA makes contestability first-class protocol structure: claim, witness, challenge, resolution, reputation impact.
 
+**Faithful disagreement.** Competing claims about the same subject coexist as first-class objects. Contradiction is a relation, not an error. Collapse is a deliberate policy act, not a default.
+
 -----
 
 ## Network Flow
@@ -123,9 +125,19 @@ pub enum ChallengeKind {
 }
 ```
 
------
+## Claim Spaces
 
-## Node API
+ANKA distinguishes two fundamentally different kinds of claim space at the registry level.
+
+**Invariant spaces** — canonicalization is objective. Examples: hashes, theorem proofs, compiler outputs, cryptographic attestations, typed schemas. These are computably collapsible. Two nodes will always agree on the result.
+
+**Interpretive spaces** — canonicalization is policy-relative. Examples: economics, medicine, journalism, legal interpretation, scientific forecasting. These do not collapse globally. They collapse only under local policy, trust weighting, and witness preference.
+
+This means a single global canonical truth `Z_global` does not exist for interpretive domains. Instead ANKA produces `Z^(policy)` — local canonical projections. That is not a limitation. It is an honest representation of how knowledge actually works.
+
+The same subject in different claim spaces never collides. Namespace isolation is enforced at the registry layer.
+
+-----
 
 ```
 POST /publish
@@ -149,6 +161,12 @@ Transport layer   peer identity / tamper rejection
 Peer sync         digest discovery / selective fetch
       ↓
 Layer 1           claim / witness / challenge / sync
+      ↓
+Claim sets        competing claims / contradiction relations / collapse modes
+      ↓
+Claim spaces      invariant vs interpretive / registry / namespace isolation
+      ↓
+Store layer       deterministic snapshot / write / restore
 ```
 
 Each layer enforces its own invariant. No layer trusts the one below blindly.
@@ -169,9 +187,15 @@ No node can smuggle an object under the wrong digest. No node can witness withou
 
 ## Current Status
 
-17 tests passing across all four layers. Multi-node canonical object propagation is live. The mesh moves objects safely. Identity is digest. Provenance is intrinsic. Tampering is rejected at the boundary.
+32 tests passing across all layers. The full substrate is operational.
 
-Witnessing is structural in v1. Semantic claim-spaces, reputation mechanics, and policy-relative convergence are the next layers.
+- Multi-node canonical object propagation is live
+- Competing claims and contradiction relations are first-class
+- Plural and single-winner collapse modes are both supported
+- Invariant and interpretive claim spaces are formally distinct at the registry level
+- Node state snapshots deterministically and restores cleanly
+
+Witnessing is structural in v1. Collapse policy, witness weight, reputation mechanics, and policy-relative convergence are the next layers.
 
 -----
 
