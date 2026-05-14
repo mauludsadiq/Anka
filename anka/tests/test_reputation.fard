@@ -1,0 +1,33 @@
+import("../src/reputation") as rep
+
+test "reputation records pass per claim space" {
+  let r0 = rep.empty() in
+  let r1 = rep.record_pass(r0, "node-A", "crypto") in
+  let s = rep.get_score(r1, "node-A", "crypto") in
+  s.passes == 1 && s.failures == 0 && s.score == 1
+}
+
+test "reputation records failure per claim space" {
+  let r0 = rep.empty() in
+  let r1 = rep.record_failure(r0, "node-A", "crypto") in
+  let s = rep.get_score(r1, "node-A", "crypto") in
+  s.passes == 0 && s.failures == 1 && s.score == -1
+}
+
+test "witness weight increases with same-space reputation" {
+  let r0 = rep.empty() in
+  let r1 = rep.record_pass(rep.record_pass(r0, "node-A", "crypto"), "node-A", "crypto") in
+  rep.witness_weight(r1, "node-A", "crypto") == 3
+}
+
+test "cross-space reputation is isolated" {
+  let r0 = rep.empty() in
+  let r1 = rep.record_pass(rep.record_pass(r0, "node-A", "crypto"), "node-A", "crypto") in
+  rep.witness_weight(r1, "node-A", "geopolitics") == 1
+}
+
+test "negative reputation floors witness weight at zero" {
+  let r0 = rep.empty() in
+  let r1 = rep.record_failure(r0, "node-A", "crypto") in
+  rep.witness_weight(r1, "node-A", "crypto") == 0
+}

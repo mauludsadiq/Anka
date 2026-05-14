@@ -1,0 +1,48 @@
+import("std/rec") as rec
+
+fn empty() {
+  {}
+}
+
+fn default_score() {
+  {
+    passes: 0,
+    failures: 0,
+    score: 0
+  }
+}
+
+fn get_score(rep, node_id, claim_space) {
+  let node_rec = rec.getOr(rep, node_id, {}) in
+  rec.getOr(node_rec, claim_space, default_score())
+}
+
+fn set_score(rep, node_id, claim_space, score_rec) {
+  let node_rec = rec.getOr(rep, node_id, {}) in
+  rec.set(rep, node_id, rec.set(node_rec, claim_space, score_rec))
+}
+
+fn record_pass(rep, node_id, claim_space) {
+  let s = get_score(rep, node_id, claim_space) in
+  set_score(rep, node_id, claim_space, {
+    passes: s.passes + 1,
+    failures: s.failures,
+    score: s.score + 1
+  })
+}
+
+fn record_failure(rep, node_id, claim_space) {
+  let s = get_score(rep, node_id, claim_space) in
+  set_score(rep, node_id, claim_space, {
+    passes: s.passes,
+    failures: s.failures + 1,
+    score: s.score - 1
+  })
+}
+
+fn witness_weight(rep, node_id, claim_space) {
+  let s = get_score(rep, node_id, claim_space) in
+  if s.score < 0 then 0 else 1 + s.score
+}
+
+export { empty, default_score, get_score, set_score, record_pass, record_failure, witness_weight }
