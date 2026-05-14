@@ -1,0 +1,98 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/type") as type
+import("canonical") as canon
+
+// Roles: origin | agent | validator | archive | policy
+// A role declaration is signed by the node declaring it.
+// Any peer can verify the declaration against the node's known identity.
+
+fn valid_role(role) {
+  role == "origin" || role == "agent" || role == "validator" || role == "archive" || role == "policy"
+}
+
+fn make_role_declaration(node_id, role, subscriptions, timestamp_unix_secs) {
+  {
+    node_id: node_id,
+    role: role,
+    subscriptions: subscriptions,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn canonical_role_declaration(decl) {
+  json.canonicalize({
+    node_id: decl.node_id,
+    role: decl.role,
+    subscriptions: decl.subscriptions,
+    timestamp_unix_secs: decl.timestamp_unix_secs
+  })
+}
+
+fn digest_role_declaration(decl) {
+  canon.digest_text(canonical_role_declaration(decl))
+}
+
+fn sign_role_declaration(decl, node_secret) {
+  let digest_hex = digest_role_declaration(decl) in
+  let sig = canon.structural_signature(node_secret, digest_hex) in
+  {
+    declaration: decl,
+    digest_hex: digest_hex,
+    signature_hex: sig
+  }
+}
+
+fn verify_role_declaration(envelope, node_secret) {
+  let schema_ok = type.of(envelope.declaration) == "record" &&
+    rec.has(envelope.declaration, "node_id") &&
+    rec.has(envelope.declaration, "role") &&
+    rec.has(envelope.declaration, "subscriptions") &&
+    valid_role(envelope.declaration.role) in
+  let digest_ok = if schema_ok then digest_role_declaration(envelope.declaration) == envelope.digest_hex else false in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(node_secret, envelope.digest_hex, envelope.signature_hex) else false in
+  {
+    valid: schema_ok && digest_ok && sig_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    signature_ok: sig_ok,
+    role: envelope.declaration.role
+  }
+}
+
+fn role_permitted_operations(role) {
+  if role == "origin" then
+    ["publish", "witness", "register_space", "genesis"]
+  else if role == "agent" then
+    ["publish"]
+  else if role == "validator" then
+    ["witness", "challenge"]
+  else if role == "archive" then
+    ["sync", "snapshot"]
+  else if role == "policy" then
+    ["collapse", "sync"]
+  else
+    []
+}
+
+fn role_can(role, operation) {
+  list.any(role_permitted_operations(role), fn(op) { op == operation })
+}
+
+fn default_subscriptions(role) {
+  if role == "origin" then
+    ["*"]
+  else if role == "agent" then
+    []
+  else if role == "validator" then
+    ["*"]
+  else if role == "archive" then
+    ["*"]
+  else if role == "policy" then
+    ["*"]
+  else
+    []
+}
+
+export { valid_role, make_role_declaration, canonical_role_declaration, digest_role_declaration, sign_role_declaration, verify_role_declaration, role_permitted_operations, role_can, default_subscriptions }

@@ -1,0 +1,67 @@
+import("../src/node_role") as role
+import("../src/node") as node
+import("std/list") as list
+
+test "valid roles are accepted" {
+  role.valid_role("origin") && role.valid_role("agent") && role.valid_role("validator") && role.valid_role("archive") && role.valid_role("policy")
+}
+
+test "invalid role is rejected" {
+  !role.valid_role("supernode") && !role.valid_role("admin") && !role.valid_role("")
+}
+
+test "role declaration digest is stable" {
+  let n = node.new_node("role-node") in
+  let decl = role.make_role_declaration(n.node_id, "validator", ["anka.invariant.crypto"], 1000) in
+  let d1 = role.digest_role_declaration(decl) in
+  let d2 = role.digest_role_declaration(decl) in
+  d1 == d2
+}
+
+test "role declaration signs and verifies" {
+  let n = node.new_node("role-node") in
+  let decl = role.make_role_declaration(n.node_id, "validator", ["anka.invariant.crypto"], 1000) in
+  let env = role.sign_role_declaration(decl, n.node_secret) in
+  let report = role.verify_role_declaration(env, n.node_secret) in
+  report.valid && report.role == "validator"
+}
+
+test "tampered role declaration fails verification" {
+  let n = node.new_node("role-node") in
+  let decl = role.make_role_declaration(n.node_id, "validator", ["anka.invariant.crypto"], 1000) in
+  let env = role.sign_role_declaration(decl, n.node_secret) in
+  let bad_decl = { ...env.declaration, role: "origin" } in
+  let bad_env = { ...env, declaration: bad_decl } in
+  let report = role.verify_role_declaration(bad_env, n.node_secret) in
+  !report.valid && !report.digest_ok
+}
+
+test "invalid role fails schema validation" {
+  let n = node.new_node("role-node") in
+  let decl = role.make_role_declaration(n.node_id, "supernode", [], 1000) in
+  let env = role.sign_role_declaration(decl, n.node_secret) in
+  let report = role.verify_role_declaration(env, n.node_secret) in
+  !report.valid && !report.schema_ok
+}
+
+test "agent can publish but not witness" {
+  role.role_can("agent", "publish") && !role.role_can("agent", "witness")
+}
+
+test "validator can witness and challenge but not publish" {
+  role.role_can("validator", "witness") && role.role_can("validator", "challenge") && !role.role_can("validator", "publish")
+}
+
+test "archive can sync and snapshot but not publish" {
+  role.role_can("archive", "sync") && role.role_can("archive", "snapshot") && !role.role_can("archive", "publish")
+}
+
+test "origin has wildcard subscription by default" {
+  let subs = role.default_subscriptions("origin") in
+  list.any(subs, fn(s) { s == "*" })
+}
+
+test "agent has empty subscriptions by default" {
+  let subs = role.default_subscriptions("agent") in
+  list.len(subs) == 0
+}
