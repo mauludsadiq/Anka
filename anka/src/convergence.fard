@@ -1,0 +1,42 @@
+import("std/list") as list
+import("std/rec") as rec
+import("node") as node
+import("claim_set") as cset
+
+fn merge_known(a, b) {
+  list.dedupe(list.concat([a, b]))
+}
+
+fn exchange_once(left_node, right_node) {
+  let left_from_right = node.sync_from(left_node, right_node) in
+  let right_from_left = node.sync_from(right_node, left_node) in
+  {
+    left: { ...left_from_right, known_digests: merge_known(left_from_right.known_digests, right_from_left.known_digests) },
+    right: { ...right_from_left, known_digests: merge_known(right_from_left.known_digests, left_from_right.known_digests) }
+  }
+}
+
+fn envelopes_for_subject(n, claim_space, subject) {
+  let keys = rec.keys(n.claims) in
+  list.filter(list.map(keys, fn(k) { rec.get(n.claims, k) }), fn(env) {
+    env.claim.claim_space == claim_space && env.claim.subject == subject
+  })
+}
+
+fn converged_known(left_node, right_node) {
+  let left_missing = list.filter(left_node.known_digests, fn(d) { !list.any(right_node.known_digests, fn(x) { x == d }) }) in
+  let right_missing = list.filter(right_node.known_digests, fn(d) { !list.any(left_node.known_digests, fn(x) { x == d }) }) in
+  list.len(left_missing) == 0 && list.len(right_missing) == 0
+}
+
+fn converged_claim_set(left_node, right_node, claim_space, subject) {
+  let left_set = cset.assemble(claim_space, subject, envelopes_for_subject(left_node, claim_space, subject), []) in
+  let right_set = cset.assemble(claim_space, subject, envelopes_for_subject(right_node, claim_space, subject), []) in
+  {
+    converged: left_set.claim_set_id == right_set.claim_set_id && left_set.claim_count == right_set.claim_count,
+    left_claim_set: left_set,
+    right_claim_set: right_set
+  }
+}
+
+export { merge_known, exchange_once, envelopes_for_subject, converged_known, converged_claim_set }

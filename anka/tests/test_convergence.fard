@@ -1,0 +1,57 @@
+import("../src/convergence") as conv
+import("../src/node") as node
+import("../src/claim_set") as cset
+import("std/list") as list
+import("std/rec") as rec
+
+test "merge known deduplicates digests" {
+  let a = ["sha256:aaa", "sha256:bbb"] in
+  let b = ["sha256:bbb", "sha256:ccc"] in
+  let merged = conv.merge_known(a, b) in
+  list.len(merged) == 3
+}
+
+test "exchange once syncs claims bidirectionally" {
+  let a0 = node.new_node("conv-a") in
+  let b0 = node.new_node("conv-b") in
+  let pub_a = node.publish(a0, "test.space", "subject", "p", "val-a", [], 100) in
+  let pub_b = node.publish(b0, "test.space", "subject", "p", "val-b", [], 101) in
+  let result = conv.exchange_once(pub_a.node, pub_b.node) in
+  conv.converged_known(result.left, result.right)
+}
+
+test "converged known detects full sync" {
+  let a0 = node.new_node("conv-a2") in
+  let b0 = node.new_node("conv-b2") in
+  let pub_a = node.publish(a0, "test.space", "s", "p", "o", [], 100) in
+  let result = conv.exchange_once(pub_a.node, b0) in
+  conv.converged_known(result.left, result.right)
+}
+
+test "converged known detects incomplete sync" {
+  let a0 = node.new_node("conv-a3") in
+  let b0 = node.new_node("conv-b3") in
+  let pub_a = node.publish(a0, "test.space", "s", "p", "o", [], 100) in
+  !conv.converged_known(pub_a.node, b0)
+}
+
+test "partition then heal converges claim sets" {
+  let a0 = node.new_node("part-a") in
+  let b0 = node.new_node("part-b") in
+  let pub_a = node.publish(a0, "econ.space", "GDP_Q3", "forecast", "2.3", [], 100) in
+  let pub_b = node.publish(b0, "econ.space", "GDP_Q3", "forecast", "1.8", [], 101) in
+  let healed = conv.exchange_once(pub_a.node, pub_b.node) in
+  let result = conv.converged_claim_set(healed.left, healed.right, "econ.space", "GDP_Q3") in
+  result.converged && result.left_claim_set.claim_count == 2
+}
+
+test "no claims silently dropped after partition heal" {
+  let a0 = node.new_node("part-a2") in
+  let b0 = node.new_node("part-b2") in
+  let pub_a = node.publish(a0, "econ.space", "GDP_Q3", "forecast", "2.3", [], 100) in
+  let pub_b = node.publish(b0, "econ.space", "GDP_Q3", "forecast", "1.8", [], 101) in
+  let healed = conv.exchange_once(pub_a.node, pub_b.node) in
+  let left_count = list.len(rec.keys(healed.left.claims)) in
+  let right_count = list.len(rec.keys(healed.right.claims)) in
+  left_count == 2 && right_count == 2
+}
