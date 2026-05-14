@@ -216,14 +216,15 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Current Status
 
-39 tests passing, plus an enhanced interpretive mesh demo. 1,141 lines of Fard across 20 source files.
+43 tests passing, plus an enhanced interpretive mesh demo. 1,216 lines of Fard across 21 source files.
 
 - Multi-node canonical object propagation live
 - Signed message layer live
 - Signed wire transport layer live
 - Peer sync planning live
 - Deterministic node state snapshots live
-- Claim-space registry live
+- Claim-space registry live with versioned objects and deterministic genesis
+- Registry witness anchors registry digest
 - Invariant and interpretive claim spaces formally distinct
 - Competing claims and contradiction relations first-class
 - Plural and single-winner local collapse supported
@@ -234,7 +235,6 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 Next layers:
 
-- Persist and gossip the claim-space registry
 - Add weighted collapse
 - Add executable/inference claims
 - Add live multi-node processes
