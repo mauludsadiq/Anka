@@ -1,0 +1,78 @@
+import("std/json") as json
+import("std/type") as type
+import("std/rec") as rec
+import("std/str") as str
+import("canonical") as canon
+
+fn canonical_message_body(msg_type, sender_node_id, payload, timestamp_unix_secs) {
+  json.canonicalize({
+    msg_type: msg_type,
+    sender_node_id: sender_node_id,
+    payload: payload,
+    timestamp_unix_secs: timestamp_unix_secs
+  })
+}
+
+fn message_body_digest(msg_type, sender_node_id, payload, timestamp_unix_secs) {
+  canon.digest_text(canonical_message_body(msg_type, sender_node_id, payload, timestamp_unix_secs))
+}
+
+fn sign_message(msg_type, sender_node_id, sender_secret, payload, timestamp_unix_secs) {
+  let body_digest = message_body_digest(msg_type, sender_node_id, payload, timestamp_unix_secs) in
+  {
+    msg_type: msg_type,
+    sender_node_id: sender_node_id,
+    payload: payload,
+    timestamp_unix_secs: timestamp_unix_secs,
+    body_digest_hex: body_digest,
+    signature_hex: canon.structural_signature(sender_secret, body_digest)
+  }
+}
+
+fn schema_valid_message(m) {
+  type.of(m) == "record" &&
+  rec.has(m, "msg_type") &&
+  rec.has(m, "sender_node_id") &&
+  rec.has(m, "payload") &&
+  rec.has(m, "timestamp_unix_secs") &&
+  rec.has(m, "body_digest_hex") &&
+  rec.has(m, "signature_hex") &&
+  type.of(m.msg_type) == "text" &&
+  type.of(m.sender_node_id) == "text" &&
+  type.of(m.timestamp_unix_secs) == "int" &&
+  type.of(m.body_digest_hex) == "text" &&
+  type.of(m.signature_hex) == "text" &&
+  str.starts_with(m.body_digest_hex, "sha256:")
+}
+
+fn message_digest_matches(m) {
+  message_body_digest(m.msg_type, m.sender_node_id, m.payload, m.timestamp_unix_secs) == m.body_digest_hex
+}
+
+fn message_signature_valid(m, sender_secret) {
+  canon.verify_structural_signature(sender_secret, m.body_digest_hex, m.signature_hex)
+}
+
+fn verify_message(m, sender_secret) {
+  let schema_ok = schema_valid_message(m) in
+  let digest_ok = if schema_ok then message_digest_matches(m) else false in
+  let signature_ok = if digest_ok then message_signature_valid(m, sender_secret) else false in
+  {
+    accepted: schema_ok && digest_ok && signature_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    signature_ok: signature_ok,
+    msg_type: if schema_ok then m.msg_type else "invalid",
+    body_digest_hex: if schema_ok then m.body_digest_hex else "invalid"
+  }
+}
+
+fn encode(m) {
+  json.encode(m)
+}
+
+fn decode(s) {
+  json.decode(s)
+}
+
+export { canonical_message_body, message_body_digest, sign_message, schema_valid_message, message_digest_matches, message_signature_valid, verify_message, encode, decode }

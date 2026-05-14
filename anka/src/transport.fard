@@ -1,0 +1,128 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("message") as message
+import("node") as node
+
+fn peer(node_id, secret) {
+  {
+    node_id: node_id,
+    secret: secret
+  }
+}
+
+fn peer_book_empty() {
+  {}
+}
+
+fn peer_book_add(book, p) {
+  rec.set(book, p.node_id, p)
+}
+
+fn peer_book_has(book, node_id) {
+  rec.has(book, node_id)
+}
+
+fn peer_book_get(book, node_id) {
+  rec.get(book, node_id)
+}
+
+fn wire_from_message(m) {
+  message.encode(m)
+}
+
+fn message_from_wire(wire) {
+  message.decode(wire)
+}
+
+fn receive_wire(peer_book, local_node, wire) {
+  let m = message_from_wire(wire) in
+  let known_peer = peer_book_has(peer_book, m.sender_node_id) in
+  if known_peer then
+    let p = peer_book_get(peer_book, m.sender_node_id) in
+    let report = message.verify_message(m, p.secret) in
+    if report.accepted then
+      apply_verified_message(local_node, m)
+    else
+      {
+        accepted: false,
+        node: local_node,
+        message_report: report,
+        reason: "message verification failed"
+      }
+  else
+    {
+      accepted: false,
+      node: local_node,
+      message_report: {
+        accepted: false,
+        schema_ok: false,
+        digest_ok: false,
+        signature_ok: false,
+        msg_type: "unknown_peer",
+        body_digest_hex: "unknown_peer"
+      },
+      reason: "unknown peer"
+    }
+}
+
+fn apply_verified_message(local_node, m) {
+  if m.msg_type == "gossip" then
+    {
+      accepted: true,
+      node: node.receive_gossip(local_node, m.payload),
+      message_report: {
+        accepted: true,
+        msg_type: m.msg_type,
+        body_digest_hex: m.body_digest_hex
+      },
+      reason: "applied gossip"
+    }
+  else if m.msg_type == "witness" then
+    {
+      accepted: true,
+      node: node.receive_witness(local_node, m.payload),
+      message_report: {
+        accepted: true,
+        msg_type: m.msg_type,
+        body_digest_hex: m.body_digest_hex
+      },
+      reason: "applied witness"
+    }
+  else if m.msg_type == "challenge" then
+    {
+      accepted: true,
+      node: node.receive_challenge(local_node, m.payload),
+      message_report: {
+        accepted: true,
+        msg_type: m.msg_type,
+        body_digest_hex: m.body_digest_hex
+      },
+      reason: "applied challenge"
+    }
+  else
+    {
+      accepted: false,
+      node: local_node,
+      message_report: {
+        accepted: false,
+        msg_type: m.msg_type,
+        body_digest_hex: m.body_digest_hex
+      },
+      reason: "unsupported message type"
+    }
+}
+
+fn make_gossip_wire(sender_node, gossip_payload, timestamp_unix_secs) {
+  wire_from_message(message.sign_message("gossip", sender_node.node_id, sender_node.node_secret, gossip_payload, timestamp_unix_secs))
+}
+
+fn make_witness_wire(sender_node, witness_payload, timestamp_unix_secs) {
+  wire_from_message(message.sign_message("witness", sender_node.node_id, sender_node.node_secret, witness_payload, timestamp_unix_secs))
+}
+
+fn make_challenge_wire(sender_node, challenge_payload, timestamp_unix_secs) {
+  wire_from_message(message.sign_message("challenge", sender_node.node_id, sender_node.node_secret, challenge_payload, timestamp_unix_secs))
+}
+
+export { peer, peer_book_empty, peer_book_add, peer_book_has, peer_book_get, wire_from_message, message_from_wire, receive_wire, apply_verified_message, make_gossip_wire, make_witness_wire, make_challenge_wire }
