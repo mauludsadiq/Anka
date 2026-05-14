@@ -1,0 +1,31 @@
+import("std/net") as net
+import("std/json") as json
+import("std/str") as str
+import("std/rec") as rec
+import("std/list") as list
+import("std/sqlite") as sqlite
+import("node") as node
+import("node_server") as server
+
+let port = 18080
+let node_name = "anka-node"
+let db_path = "file:out/node/anka_node.db?cache=shared&mode=rwc"
+
+let db = sqlite.open(db_path)
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+
+let boot_node = node.new_node(node_name)
+let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'")
+let initial_state = if list.len(existing) > 0 then
+  json.decode(existing[0].value)
+else
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(boot_node), "')"]))
+  in boot_node
+
+let _ = net.serve(port, fn(req) {
+  let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'") in
+  let state = json.decode(rows[0].value) in
+  let result = server.handle(state, {}, req) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
+  result.response
+})

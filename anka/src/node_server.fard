@@ -1,0 +1,49 @@
+import("std/net") as net
+import("std/json") as json
+import("std/rec") as rec
+import("std/str") as str
+import("std/list") as list
+import("node") as node
+
+fn json_response(state, data) {
+  { next_state: state, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
+}
+
+fn error_response(state, code, reason) {
+  { next_state: state, response: { status: code, body: json.encode({ ok: false, reason: reason }), content_type: "application/json" } }
+}
+
+fn handle(state, peer_book, req) {
+  if req.path == "/health" && req.method == "GET" then
+    json_response(state, { ok: true, node_id: state.node_id })
+  else if req.path == "/known" && req.method == "GET" then
+    json_response(state, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
+  else if req.path == "/sync" && req.method == "GET" then
+    json_response(state, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
+  else if req.path == "/publish" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
+    json_response(pub.node, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip })
+  else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
+    let digest = str.slice(req.path, 7, str.len(req.path)) in
+    if node.has_claim(state, digest) then
+      json_response(state, { ok: true, envelope: node.fetch_claim(state, digest) })
+    else
+      error_response(state, 404, "claim not found")
+  else if req.path == "/gossip" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next = node.receive_gossip(state, body) in
+    json_response(next, { ok: true, node_id: next.node_id, known_digest_count: list.len(next.known_digests) })
+  else if req.path == "/witness" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next = node.receive_witness(state, body) in
+    json_response(next, { ok: true, node_id: next.node_id })
+  else if req.path == "/challenge" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next = node.receive_challenge(state, body) in
+    json_response(next, { ok: true, node_id: next.node_id })
+  else
+    error_response(state, 404, "unknown route")
+}
+
+export { handle, json_response, error_response }
