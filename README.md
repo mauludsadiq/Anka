@@ -216,7 +216,7 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 
 ## Current Status
 
-38 tests passing, plus an enhanced interpretive mesh demo. 1,141 lines of Fard across 20 source files.
+39 tests passing, plus an enhanced interpretive mesh demo. 1,141 lines of Fard across 20 source files.
 
 - Multi-node canonical object propagation live
 - Signed message layer live
@@ -229,11 +229,11 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 - Plural and single-winner local collapse supported
 - Context-scoped reputation live
 - Semantic challenge resolution live
+- Simulation deterministic: same scenario produces identical digests across runs
 - Enhanced demo shows interpretive divergence, witnesses, challenge, local collapse policies, and reputation effects
 
 Next layers:
 
-- Make simulation fully deterministic
 - Persist and gossip the claim-space registry
 - Add weighted collapse
 - Add executable/inference claims
