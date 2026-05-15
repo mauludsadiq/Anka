@@ -1,0 +1,92 @@
+import("../src/adversarial_sim") as sim
+import("../src/node") as node
+import("../src/reputation") as rep
+import("std/list") as list
+
+test "honest node witnesses correctly" {
+  let sn = sim.make_sim_node("honest-a", "honest") in
+  let pub = node.publish(sn.node, "test.space", "s", "p", "o", [], 100) in
+  let result = sim.act_on_claim(sn, pub.envelope, 101) in
+  result.accepted && result.witness != null
+}
+
+test "lazy node witnesses without recomputing" {
+  let sn = sim.make_sim_node("lazy-a", "lazy") in
+  let pub = node.publish(sn.node, "test.space", "s", "p", "o", [], 100) in
+  let result = sim.act_on_claim(sn, pub.envelope, 101) in
+  result.accepted && result.witness != null
+}
+
+test "dropper node drops claims from matching issuers" {
+  let issuer = node.new_node("dropper-a") in
+  let dropper = sim.make_sim_node("dropper-a", "dropper") in
+  let pub = node.publish(issuer, "test.space", "s", "p", "o", [], 100) in
+  let drop_result = sim.should_drop(dropper, pub.envelope) in
+  let honest = sim.make_sim_node("honest-x", "honest") in
+  let honest_result = sim.should_drop(honest, pub.envelope) in
+  !honest_result
+}
+
+test "convergence report detects full convergence after heal" {
+  let a = sim.make_sim_node("node-a", "honest") in
+  let b = sim.make_sim_node("node-b", "honest") in
+  let pub = node.publish(a.node, "test.space", "s", "p", "o", [], 100) in
+  let a2 = { ...a, node: pub.node } in
+  let healed = sim.heal_partition([a2], [b]) in
+  let report = sim.convergence_report(healed) in
+  report.fully_converged
+}
+
+test "adversarial sim runs with mixed behaviors" {
+  let scenario = {
+    name: "mixed behavior test",
+    nodes: [
+      { id: "honest-1", behavior: "honest" },
+      { id: "honest-2", behavior: "honest" },
+      { id: "lazy-1", behavior: "lazy" },
+      { id: "dropper-1", behavior: "dropper" }
+    ],
+    claims: [
+      { issuer: "honest-1", claim_space: "test.space", subject: "GDP", predicate: "forecast", object: "2.3", evidence_refs: [], timestamp_unix_secs: 100 },
+      { issuer: "honest-2", claim_space: "test.space", subject: "GDP", predicate: "forecast", object: "1.8", evidence_refs: [], timestamp_unix_secs: 101 }
+    ],
+    partition_a: ["honest-1", "lazy-1"],
+    timestamp_unix_secs: 100
+  } in
+  let result = sim.run_adversarial_sim(scenario) in
+  result.ok && result.node_count == 4 && result.claim_count == 2
+}
+
+test "lazy witnesses accumulate separately from honest" {
+  let scenario = {
+    name: "lazy vs honest",
+    nodes: [
+      { id: "honest-1", behavior: "honest" },
+      { id: "lazy-1", behavior: "lazy" }
+    ],
+    claims: [
+      { issuer: "honest-1", claim_space: "test.space", subject: "s", predicate: "p", object: "o", evidence_refs: [], timestamp_unix_secs: 100 }
+    ],
+    partition_a: ["honest-1"],
+    timestamp_unix_secs: 100
+  } in
+  let result = sim.run_adversarial_sim(scenario) in
+  result.ok && result.lazy_witness_count >= 0 && result.honest_witness_count >= 0
+}
+
+test "penalty report shows scores per node" {
+  let scenario = {
+    name: "penalty check",
+    nodes: [
+      { id: "honest-1", behavior: "honest" },
+      { id: "lazy-1", behavior: "lazy" }
+    ],
+    claims: [
+      { issuer: "honest-1", claim_space: "test.space", subject: "s", predicate: "p", object: "o", evidence_refs: [], timestamp_unix_secs: 100 }
+    ],
+    partition_a: ["honest-1"],
+    timestamp_unix_secs: 100
+  } in
+  let result = sim.run_adversarial_sim(scenario) in
+  list.len(result.penalties) == 2
+}

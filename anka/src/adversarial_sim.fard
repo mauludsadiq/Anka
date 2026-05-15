@@ -1,0 +1,154 @@
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/str") as str
+import("node") as node
+import("convergence") as conv
+import("reputation") as rep
+import("witness") as witness
+import("claim") as claim
+import("std/rec") as rec
+import("std/list") as list
+import("challenge") as challenge
+import("witness_duty") as duty
+
+// Node behaviors
+// "honest"   - recomputes before witnessing, files challenges only when valid
+// "lazy"     - witnesses without recomputing (structural only, no verification)
+// "flooder"  - gossips junk digests to overwhelm peers
+// "dropper"  - selectively ignores claims from specific issuers
+// "false_challenger" - challenges valid claims maliciously
+
+fn make_sim_node(id, behavior) {
+  {
+    id: id,
+    behavior: behavior,
+    node: node.new_node(id)
+  }
+}
+
+fn honest_witness(sim_node, envelope, timestamp_unix_secs) {
+  let report = claim.verify_envelope_digest_only(envelope) in
+  if report.accepted then
+    let w = witness.make_witness(envelope.digest_hex, sim_node.node.node_id, "structural", timestamp_unix_secs, sim_node.node.node_secret) in
+    let next_node = { ...sim_node.node,
+      claims: rec.set(sim_node.node.claims, envelope.digest_hex, envelope),
+      witnesses: rec.set(sim_node.node.witnesses, envelope.digest_hex, w),
+      known_digests: list.dedupe(list.append(sim_node.node.known_digests, envelope.digest_hex))
+    } in
+    { accepted: true, witness: w, node: next_node }
+  else
+    { accepted: false, witness: null, node: sim_node.node }
+}
+
+fn lazy_witness(sim_node, envelope, timestamp_unix_secs) {
+  let w = witness.make_witness(envelope.digest_hex, sim_node.node.node_id, "structural", timestamp_unix_secs, sim_node.node.node_secret) in
+  { accepted: true, witness: w, node: sim_node.node }
+}
+
+fn should_drop(sim_node, envelope) {
+  sim_node.behavior == "dropper" && str.starts_with(envelope.claim.issuer_node_id, "sha256:1")
+}
+
+fn act_on_claim(sim_node, envelope, timestamp_unix_secs) {
+  if sim_node.behavior == "honest" then
+    honest_witness(sim_node, envelope, timestamp_unix_secs)
+  else if sim_node.behavior == "lazy" then
+    lazy_witness(sim_node, envelope, timestamp_unix_secs)
+  else if sim_node.behavior == "dropper" && should_drop(sim_node, envelope) then
+    { accepted: false, witness: null, node: sim_node.node }
+  else
+    honest_witness(sim_node, envelope, timestamp_unix_secs)
+}
+
+fn run_round(sim_nodes, publications, rep_state, timestamp_unix_secs) {
+  list.fold(sim_nodes, { nodes: sim_nodes, rep_state: rep_state, witness_log: [], drop_log: [] }, fn(acc, sn) {
+    list.fold(publications, acc, fn(acc2, pub) {
+      let result = act_on_claim(sn, pub.envelope, timestamp_unix_secs) in
+      if result.accepted && result.witness != null then
+        let updated_nodes = list.map(acc2.nodes, fn(n) {
+          if n.id == sn.id then { ...n, node: result.node } else n
+        }) in
+        let next_rep = duty.record_witness_pass(acc2.rep_state, sn.node.node_id, pub.envelope.claim.claim_space) in
+        { ...acc2, nodes: updated_nodes, rep_state: next_rep, witness_log: list.append(acc2.witness_log, { witness_id: sn.id, digest_hex: pub.envelope.digest_hex, behavior: sn.behavior }) }
+      else
+        { ...acc2, drop_log: list.append(acc2.drop_log, { node_id: sn.id, digest_hex: pub.envelope.digest_hex, behavior: sn.behavior }) }
+    })
+  })
+}
+
+fn partition_exchange(group_a, group_b) {
+  list.fold(group_a, group_b, fn(acc_b, node_a) {
+    list.map(acc_b, fn(nb) {
+      let result = conv.exchange_once(node_a.node, nb.node) in
+      { ...nb, node: result.right }
+    })
+  })
+}
+
+fn heal_partition(group_a, group_b) {
+  let merged = list.concat([group_a, group_b]) in
+  let all_nodes = list.fold(merged, merged, fn(acc, sn) {
+    list.map(acc, fn(other) {
+      if other.id == sn.id then other
+      else
+        let result = conv.exchange_once(sn.node, other.node) in
+        { ...other, node: result.right }
+    })
+  }) in
+  all_nodes
+}
+
+fn convergence_report(sim_nodes) {
+  let all_digests = list.fold(sim_nodes, [], fn(acc, sn) {
+    list.dedupe(list.concat([acc, sn.node.known_digests]))
+  }) in
+  let converged_nodes = list.filter(sim_nodes, fn(sn) {
+    list.len(sn.node.known_digests) == list.len(all_digests)
+  }) in
+  {
+    total_nodes: list.len(sim_nodes),
+    total_digests: list.len(all_digests),
+    converged_node_count: list.len(converged_nodes),
+    fully_converged: list.len(converged_nodes) == list.len(sim_nodes),
+    convergence_rate: list.len(converged_nodes)
+  }
+}
+
+fn penalty_report(rep_state, sim_nodes) {
+  list.map(sim_nodes, fn(sn) {
+    let score = rep.get_score(rep_state, sn.node.node_id, "test.space") in
+    { id: sn.id, behavior: sn.behavior, score: score.score, passes: score.passes, failures: score.failures }
+  })
+}
+
+fn run_adversarial_sim(scenario) {
+  let sim_nodes = list.map(scenario.nodes, fn(n) { make_sim_node(n.id, n.behavior) }) in
+  let publishers = list.filter(sim_nodes, fn(n) { n.behavior != "flooder" }) in
+  let publications = list.map(scenario.claims, fn(c) {
+    let issuer = list.find(sim_nodes, fn(n) { n.id == c.issuer }).some in
+    let pub = node.publish(issuer.node, c.claim_space, c.subject, c.predicate, c.object, c.evidence_refs, c.timestamp_unix_secs) in
+    { issuer_id: c.issuer, envelope: pub.envelope }
+  }) in
+  let partition_a = list.filter(sim_nodes, fn(n) { list.any(scenario.partition_a, fn(id) { id == n.id }) }) in
+  let partition_b = list.filter(sim_nodes, fn(n) { !list.any(scenario.partition_a, fn(id) { id == n.id }) }) in
+  let round1 = run_round(partition_a, publications, rep.empty(), scenario.timestamp_unix_secs) in
+  let round2 = run_round(partition_b, publications, round1.rep_state, scenario.timestamp_unix_secs + 1) in
+  let healed = heal_partition(round1.nodes, round2.nodes) in
+  let conv_report = convergence_report(healed) in
+  let pen_report = penalty_report(round2.rep_state, healed) in
+  {
+    ok: true,
+    scenario: scenario.name,
+    node_count: list.len(sim_nodes),
+    claim_count: list.len(publications),
+    convergence: conv_report,
+    penalties: pen_report,
+    witness_log: round1.witness_log,
+    drop_log: round2.drop_log,
+    lazy_witness_count: list.len(list.filter(list.concat([round1.witness_log, round2.witness_log]), fn(w) { w.behavior == "lazy" })),
+    honest_witness_count: list.len(list.filter(list.concat([round1.witness_log, round2.witness_log]), fn(w) { w.behavior == "honest" }))
+  }
+}
+
+export { make_sim_node, honest_witness, lazy_witness, act_on_claim, should_drop, run_round, partition_exchange, heal_partition, convergence_report, penalty_report, run_adversarial_sim }
