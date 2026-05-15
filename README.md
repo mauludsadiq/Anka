@@ -3,7 +3,7 @@
 **The interoperability substrate for AI-operated systems.**
 
 ![Tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C500-blue)
+![Lines](https://img.shields.io/badge/lines-3%2C509-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -77,6 +77,8 @@ These are not features. They are web primitives — the minimum set required for
 **Rate limiting.** Sliding window counters per endpoint. 429 on excess. Configurable per deployment.
 
 **SDK.** `sdk.fard` exposes the full node API as importable functions. Any Fard program can interact with an ANKA mesh in three lines.
+
+**Dashboard.** `GET /dashboard` on any node serves a live operator UI — claims, witnesses, digests, peers, registry, and audit trail. No build chain, no npm, no separate process. Ships with every node.
 
 **Agent adapter.** `agent.fard` provides `publish_llm_output`, `verified_query`, and `cite` — the three operations an AI system needs to participate in the mesh. Publish an output as a verifiable claim. Query with a minimum witness threshold. Fetch a claim by digest and get its full provenance.
 
@@ -253,7 +255,7 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 
 The substrate is complete. The application layer is not.
 
-**Discovery registry.** Nodes find each other by address. There is no mechanism for an Oxford node to discover a MIT node without prior out-of-band coordination. A signed registry of institutional nodes — even a static JSON file at a well-known URL — closes this gap.
+**Discovery registry.** Nodes find each other by address. There is no mechanism for an Oxford node to discover a MIT node without prior out-of-band coordination. A signed registry of institutional nodes closes this gap. In progress.
 
 **Economic security layer.** In a permissioned institutional mesh, Ed25519 identity declarations provide sufficient Sybil resistance. For open participation, staking and slashing are needed. The reputation model is the foundation; token economics would sit on top of it.
 
