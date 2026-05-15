@@ -1,0 +1,88 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/http") as http
+import("canonical") as canon
+
+fn make_replication_declaration(node_id, archive_addresses, timestamp_unix_secs, node_secret) {
+  let decl = {
+    node_id: node_id,
+    archive_addresses: archive_addresses,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  let digest_hex = canon.digest_text(json.canonicalize(decl)) in
+  let sig = canon.structural_signature(node_secret, digest_hex) in
+  {
+    declaration: decl,
+    digest_hex: digest_hex,
+    signature_hex: sig
+  }
+}
+
+fn verify_replication_declaration(envelope, node_secret) {
+  let digest_ok = canon.digest_text(json.canonicalize(envelope.declaration)) == envelope.digest_hex in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(node_secret, envelope.digest_hex, envelope.signature_hex) else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn make_replication_receipt(archive_node_id, digest_hex, issuer_node_id, timestamp_unix_secs, archive_secret) {
+  let receipt = {
+    archive_node_id: archive_node_id,
+    digest_hex: digest_hex,
+    issuer_node_id: issuer_node_id,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  let receipt_digest = canon.digest_text(json.canonicalize(receipt)) in
+  let sig = canon.structural_signature(archive_secret, receipt_digest) in
+  {
+    receipt: receipt,
+    receipt_digest_hex: receipt_digest,
+    signature_hex: sig
+  }
+}
+
+fn verify_replication_receipt(envelope, archive_secret) {
+  let digest_ok = canon.digest_text(json.canonicalize(envelope.receipt)) == envelope.receipt_digest_hex in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(archive_secret, envelope.receipt_digest_hex, envelope.signature_hex) else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn push_to_archive(archive_address, envelope, issuer_node_id) {
+  let body = json.encode({ envelope: envelope, issuer_node_id: issuer_node_id }) in
+  let result = http.post(str.concat([archive_address, "/archive/store"]), body) in
+  { ok: result.status == 200, address: archive_address, status: result.status }
+}
+
+fn replicate_to_all(archive_addresses, envelope, issuer_node_id) {
+  list.map(archive_addresses, fn(addr) { push_to_archive(addr, envelope, issuer_node_id) })
+}
+
+fn replication_status(digest_hex, receipts) {
+  let holding = list.filter(receipts, fn(r) { r.receipt.digest_hex == digest_hex }) in
+  {
+    digest_hex: digest_hex,
+    replica_count: list.len(holding),
+    archive_nodes: list.map(holding, fn(r) { r.receipt.archive_node_id }),
+    durable: list.len(holding) > 0
+  }
+}
+
+fn empty_replication_log() {
+  { receipts: [], declarations: {} }
+}
+
+fn add_receipt(log, receipt_envelope) {
+  { ...log, receipts: list.append(log.receipts, receipt_envelope) }
+}
+
+fn add_declaration(log, node_id, declaration_envelope) {
+  { ...log, declarations: rec.set(log.declarations, node_id, declaration_envelope) }
+}
+
+fn get_targets(log, node_id) {
+  let decl = rec.getOr(log.declarations, node_id, null) in
+  if decl == null then [] else decl.declaration.archive_addresses
+}
+
+export { make_replication_declaration, verify_replication_declaration, make_replication_receipt, verify_replication_receipt, push_to_archive, replicate_to_all, replication_status, empty_replication_log, add_receipt, add_declaration, get_targets }

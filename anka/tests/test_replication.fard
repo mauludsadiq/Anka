@@ -1,0 +1,63 @@
+import("../src/replication") as rep
+import("../src/node") as node
+import("std/list") as list
+import("std/rec") as rec
+
+test "replication declaration signs and verifies" {
+  let n = node.new_node("publisher") in
+  let env = rep.make_replication_declaration(n.node_id, ["http://archive-a:18083", "http://archive-b:18083"], 1000, n.node_secret) in
+  let report = rep.verify_replication_declaration(env, n.node_secret) in
+  report.valid && report.digest_ok && report.signature_ok
+}
+
+test "tampered replication declaration fails verification" {
+  let n = node.new_node("publisher") in
+  let env = rep.make_replication_declaration(n.node_id, ["http://archive-a:18083"], 1000, n.node_secret) in
+  let bad_decl = { ...env.declaration, archive_addresses: ["http://attacker:18083"] } in
+  let bad_env = { ...env, declaration: bad_decl } in
+  let report = rep.verify_replication_declaration(bad_env, n.node_secret) in
+  !report.valid && !report.digest_ok
+}
+
+test "replication receipt signs and verifies" {
+  let archive = node.new_node("archive") in
+  let env = rep.make_replication_receipt(archive.node_id, "sha256:abc", "sha256:issuer", 1000, archive.node_secret) in
+  let report = rep.verify_replication_receipt(env, archive.node_secret) in
+  report.valid && report.digest_ok && report.signature_ok
+}
+
+test "tampered replication receipt fails verification" {
+  let archive = node.new_node("archive") in
+  let env = rep.make_replication_receipt(archive.node_id, "sha256:abc", "sha256:issuer", 1000, archive.node_secret) in
+  let bad_receipt = { ...env.receipt, digest_hex: "sha256:tampered" } in
+  let bad_env = { ...env, receipt: bad_receipt } in
+  let report = rep.verify_replication_receipt(bad_env, archive.node_secret) in
+  !report.valid && !report.digest_ok
+}
+
+test "replication status tracks holding archive nodes" {
+  let archive = node.new_node("archive") in
+  let r1 = rep.make_replication_receipt(archive.node_id, "sha256:abc", "sha256:issuer", 1000, archive.node_secret) in
+  let log = rep.add_receipt(rep.empty_replication_log(), r1) in
+  let status = rep.replication_status("sha256:abc", log.receipts) in
+  status.durable && status.replica_count == 1 && list.any(status.archive_nodes, fn(n) { n == archive.node_id })
+}
+
+test "replication status not durable with no receipts" {
+  let log = rep.empty_replication_log() in
+  let status = rep.replication_status("sha256:abc", log.receipts) in
+  !status.durable && status.replica_count == 0
+}
+
+test "get targets returns declared archive addresses" {
+  let n = node.new_node("publisher") in
+  let env = rep.make_replication_declaration(n.node_id, ["http://archive-a:18083", "http://archive-b:18083"], 1000, n.node_secret) in
+  let log = rep.add_declaration(rep.empty_replication_log(), n.node_id, env) in
+  let targets = rep.get_targets(log, n.node_id) in
+  list.len(targets) == 2
+}
+
+test "replication log starts empty" {
+  let log = rep.empty_replication_log() in
+  list.len(log.receipts) == 0 && list.len(rec.keys(log.declarations)) == 0
+}
