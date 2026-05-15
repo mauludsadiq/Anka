@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C509-blue)
+![Tests](https://img.shields.io/badge/tests-178%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-3%2C641-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -253,13 +253,9 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 
 ## What Is Not Built Yet
 
-The substrate is complete. The application layer is not.
+**Economic security layer.** In a permissioned institutional mesh, Ed25519 identity declarations and reputation provide sufficient Sybil resistance. For open participation, staking and slashing are needed — publish stakes, witness stakes, challenge stakes. The reputation model is the foundation; token economics sit on top of it.
 
-**Discovery registry.** Nodes find each other by address. There is no mechanism for an Oxford node to discover a MIT node without prior out-of-band coordination. A signed registry of institutional nodes closes this gap. In progress.
-
-**Economic security layer.** In a permissioned institutional mesh, Ed25519 identity declarations provide sufficient Sybil resistance. For open participation, staking and slashing are needed. The reputation model is the foundation; token economics would sit on top of it.
-
-**First production deployment.** The protocol is ready. The mesh has been tested. What remains is running it between two institutions on separate machines with real operators and real claims.
+**First production deployment.** The protocol is ready. The mesh has been tested across five nodes on one machine. What remains is running it between two institutions on separate machines, with real operators, real claim spaces, and real stakes.
 
 # License
 
