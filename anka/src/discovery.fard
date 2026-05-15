@@ -1,0 +1,109 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/http") as http
+import("canonical") as canon
+import("keypair") as kp
+
+fn make_node_entry(node_id, public_key_hex, address, institution, department, role) {
+  {
+    node_id: node_id,
+    public_key_hex: public_key_hex,
+    address: address,
+    institution: institution,
+    department: department,
+    role: role
+  }
+}
+
+fn entry_digest(entry) {
+  canon.digest_text(json.canonicalize({
+    node_id: entry.node_id,
+    public_key_hex: entry.public_key_hex,
+    address: entry.address,
+    institution: entry.institution
+  }))
+}
+
+fn sign_entry(entry, private_key_hex) {
+  let digest_hex = entry_digest(entry) in
+  let raw = kp.strip_prefix(digest_hex) in
+  let sig = kp.sign(private_key_hex, raw) in
+  { ...entry, digest_hex: digest_hex, signature_hex: sig }
+}
+
+fn verify_entry(signed_entry) {
+  let expected_digest = entry_digest(signed_entry) in
+  let digest_ok = expected_digest == signed_entry.digest_hex in
+  let sig_ok = if digest_ok then
+    let raw = kp.strip_prefix(signed_entry.digest_hex) in
+    kp.verify(signed_entry.public_key_hex, raw, signed_entry.signature_hex)
+  else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn make_registry(entries, issuer_node_id, timestamp_unix_secs) {
+  {
+    entries: entries,
+    entry_count: list.len(entries),
+    issuer_node_id: issuer_node_id,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn registry_digest(registry) {
+  canon.digest_text(json.canonicalize({
+    entries: registry.entries,
+    issuer_node_id: registry.issuer_node_id,
+    timestamp_unix_secs: registry.timestamp_unix_secs
+  }))
+}
+
+fn sign_registry(registry, private_key_hex) {
+  let digest_hex = registry_digest(registry) in
+  let raw = kp.strip_prefix(digest_hex) in
+  let sig = kp.sign(private_key_hex, raw) in
+  { registry: registry, digest_hex: digest_hex, signature_hex: sig }
+}
+
+fn verify_registry(envelope, issuer_public_key_hex) {
+  let digest_ok = registry_digest(envelope.registry) == envelope.digest_hex in
+  let sig_ok = if digest_ok then
+    let raw = kp.strip_prefix(envelope.digest_hex) in
+    kp.verify(issuer_public_key_hex, raw, envelope.signature_hex)
+  else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn fetch_discovery(discovery_url) {
+  let result = http.get(discovery_url) in
+  if result.status == 200 then
+    { ok: true, envelope: json.decode(result.body) }
+  else
+    { ok: false, reason: str.concat(["fetch failed: ", str.from(result.status)]) }
+}
+
+fn peers_from_registry(envelope, self_node_id) {
+  let entries = envelope.registry.entries in
+  let verified = list.filter(entries, fn(e) {
+    let report = verify_entry(e) in
+    report.valid && e.node_id != self_node_id
+  }) in
+  list.map(verified, fn(e) { e.address })
+}
+
+fn add_entry(registry, entry) {
+  let next_entries = list.append(registry.entries, entry) in
+  { ...registry, entries: next_entries, entry_count: list.len(next_entries) }
+}
+
+fn find_entry(registry, node_id) {
+  list.find(registry.entries, fn(e) { e.node_id == node_id })
+}
+
+fn institutions(registry) {
+  list.dedupe(list.map(registry.entries, fn(e) { e.institution }))
+}
+
+export { make_node_entry, entry_digest, sign_entry, verify_entry, make_registry, registry_digest, sign_registry, verify_registry, fetch_discovery, peers_from_registry, add_entry, find_entry, institutions }

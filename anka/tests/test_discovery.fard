@@ -1,0 +1,71 @@
+import("../src/discovery") as disc
+import("../src/node") as node
+import("std/list") as list
+import("std/str") as str
+
+test "node entry signs and verifies" {
+  let n = node.new_node("oxford-econ") in
+  let entry = disc.make_node_entry(n.node_id, n.public_key_hex, "https://anka.ox.ac.uk", "University of Oxford", "Economics", "validator") in
+  let signed = disc.sign_entry(entry, n.node_secret) in
+  let report = disc.verify_entry(signed) in
+  report.valid && report.digest_ok && report.signature_ok
+}
+
+test "tampered entry fails verification" {
+  let n = node.new_node("oxford-econ") in
+  let entry = disc.make_node_entry(n.node_id, n.public_key_hex, "https://anka.ox.ac.uk", "University of Oxford", "Economics", "validator") in
+  let signed = disc.sign_entry(entry, n.node_secret) in
+  let bad = { ...signed, institution: "University of Cambridge" } in
+  let report = disc.verify_entry(bad) in
+  !report.valid && !report.digest_ok
+}
+
+test "registry signs and verifies" {
+  let n = node.new_node("origin") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n.node_id, n.public_key_hex, "https://anka.ox.ac.uk", "University of Oxford", "Economics", "validator"), n.node_secret) in
+  let registry = disc.make_registry([e1], n.node_id, 1000) in
+  let envelope = disc.sign_registry(registry, n.node_secret) in
+  let report = disc.verify_registry(envelope, n.public_key_hex) in
+  report.valid
+}
+
+test "tampered registry fails verification" {
+  let n = node.new_node("origin") in
+  let registry = disc.make_registry([], n.node_id, 1000) in
+  let envelope = disc.sign_registry(registry, n.node_secret) in
+  let bad_registry = { ...envelope.registry, timestamp_unix_secs: 9999 } in
+  let bad_envelope = { ...envelope, registry: bad_registry } in
+  let report = disc.verify_registry(bad_envelope, n.public_key_hex) in
+  !report.valid
+}
+
+test "peers from registry excludes self" {
+  let n1 = node.new_node("oxford") in
+  let n2 = node.new_node("mit") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n1.node_id, n1.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator"), n1.node_secret) in
+  let e2 = disc.sign_entry(disc.make_node_entry(n2.node_id, n2.public_key_hex, "https://anka.mit.edu", "MIT", "CSAIL", "validator"), n2.node_secret) in
+  let registry = disc.make_registry([e1, e2], n1.node_id, 1000) in
+  let envelope = disc.sign_registry(registry, n1.node_secret) in
+  let peers = disc.peers_from_registry(envelope, n1.node_id) in
+  list.len(peers) == 1 && list.any(peers, fn(p) { p == "https://anka.mit.edu" })
+}
+
+test "institutions extracts unique institutions" {
+  let n1 = node.new_node("oxford") in
+  let n2 = node.new_node("mit") in
+  let n3 = node.new_node("oxford-b") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n1.node_id, n1.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator"), n1.node_secret) in
+  let e2 = disc.sign_entry(disc.make_node_entry(n2.node_id, n2.public_key_hex, "https://anka.mit.edu", "MIT", "CSAIL", "validator"), n2.node_secret) in
+  let e3 = disc.sign_entry(disc.make_node_entry(n3.node_id, n3.public_key_hex, "https://anka-b.ox.ac.uk", "Oxford", "Physics", "validator"), n3.node_secret) in
+  let registry = disc.make_registry([e1, e2, e3], n1.node_id, 1000) in
+  let insts = disc.institutions(registry) in
+  list.len(insts) == 2
+}
+
+test "entry digest is stable" {
+  let n = node.new_node("oxford") in
+  let entry = disc.make_node_entry(n.node_id, n.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator") in
+  let d1 = disc.entry_digest(entry) in
+  let d2 = disc.entry_digest(entry) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}

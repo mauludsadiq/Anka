@@ -7,6 +7,7 @@ import("std/sqlite") as sqlite
 import("std/datetime") as dt
 import("node") as node
 import("origin") as origin
+import("discovery") as disc
 
 let port = 18090
 let node_name = "anka-origin"
@@ -21,6 +22,9 @@ let boot_node = if list.len(existing) > 0 then json.decode(existing[0].value) el
 let _ = if list.len(existing) == 0 then sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('origin_node', '", json.encode(origin_node), "')"])) else null
 
 let genesis_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'")
+let disc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'discovery'")
+let boot_node_for_disc = node.new_node("anka-origin")
+let initial_discovery = if list.len(disc_rows) > 0 then json.decode(disc_rows[0].value) else disc.make_registry([], boot_node_for_disc.node_id, 0)
 let boot_genesis = if list.len(genesis_rows) > 0 then
   json.decode(genesis_rows[0].value)
 else
@@ -55,6 +59,25 @@ let _ = net.serve(port, fn(req) {
       { name: k, category: entry.space.category, convergence_policy: entry.space.convergence_policy }
     }) in
     { status: 200, body: json.encode({ ok: true, spaces: spaces, registry_digest_hex: g.registry_digest_hex }), content_type: "application/json" }
+  else if req.path == "/discovery" && req.method == "GET" then
+    let disc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'discovery'") in
+    let boot_node = node.new_node("anka-origin") in
+    let registry = if list.len(disc_rows) > 0 then json.decode(disc_rows[0].value) else disc.make_registry([], boot_node.node_id, 0) in
+    let envelope = disc.sign_registry(registry, boot_node.node_secret) in
+    { status: 200, body: json.encode({ ok: true, envelope: envelope, entry_count: registry.entry_count, institutions: disc.institutions(registry) }), content_type: "application/json" }
+  else if req.path == "/discovery/register" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let entry = body.entry in
+    let report = disc.verify_entry(entry) in
+    if !report.valid then
+      { status: 400, body: json.encode({ ok: false, reason: "invalid entry signature" }), content_type: "application/json" }
+    else
+      let disc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'discovery'") in
+      let boot_node = node.new_node("anka-origin") in
+      let registry = if list.len(disc_rows) > 0 then json.decode(disc_rows[0].value) else disc.make_registry([], boot_node.node_id, 0) in
+      let next_registry = disc.add_entry(registry, entry) in
+      let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('discovery', '", json.encode(next_registry), "')"])) in
+      { status: 200, body: json.encode({ ok: true, entry_count: next_registry.entry_count, node_id: entry.node_id }), content_type: "application/json" }
   else
     { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), content_type: "application/json" }
 })
