@@ -4,8 +4,8 @@
 
 Written in [Fard](https://github.com/mauludsadiq/FARD).
 
-![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-2%2C547-blue)
+![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-2%2C701-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Roadmap](https://img.shields.io/badge/roadmap-7%2F8%20phases-orange)
 ![Status](https://img.shields.io/badge/status-active-success)
