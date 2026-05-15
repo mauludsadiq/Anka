@@ -1,14 +1,21 @@
 # ANKA
 
-**A verifiable claim substrate for autonomous AI systems.**
+**The interoperability substrate for AI-operated systems.**
 
 Written in [Fard](https://github.com/mauludsadiq/FARD).
 
-![Tests](https://img.shields.io/badge/tests-164%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C301-blue)
+![Tests](https://img.shields.io/badge/tests-178%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-3%2C401-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
-![Roadmap](https://img.shields.io/badge/roadmap-8%2F8%20phases-brightgreen)
 ![Status](https://img.shields.io/badge/status-active-success)
+
+-----
+
+## The Claim
+
+In the 1990s, every company needed a website. By 2030, every company operating AI systems will need those systems connected to each other — not through APIs bolted onto human-facing infrastructure, but through a substrate designed for machine-to-machine coordination from the ground up.
+
+ANKA is that substrate. It is to the AI-native internet what HTTP, DNS, and TLS are to the human web — not an application, not a model, not a platform. The interoperability layer that everything else runs on top of.
 
 -----
 
@@ -24,42 +31,38 @@ ANKA is that primitive.
 
 -----
 
-## Quickstart
+## The Web Stack Analogy
 
-**Requirements:** [Fard](https://github.com/mauludsadiq/FARD) runtime installed.
+The web became the web because a small set of composable primitives — URLs, HTTP, DNS, TLS — made interoperability the default. No central coordinator. No shared database. Any node that speaks the protocol can participate.
 
-```bash
-# Clone and start an origin node
-git clone https://github.com/mauludsadiq/Anka && cd Anka
-fardrun run --program anka/src/origin_process.fard --out out/origin &
-fardrun run --program anka/src/node_process.fard --out out/node &
-sleep 2
+ANKA is the same bet, one layer up.
 
-# Register peer
-curl -X POST http://localhost:18080/peer \
-  -H "Content-Type: application/json" \
-  -d '{"address":"http://localhost:18090"}'
+|Web Primitive|ANKA Equivalent         |What It Does                                                                                   |
+|-------------|------------------------|-----------------------------------------------------------------------------------------------|
+|URL          |Content-addressed digest|Stable identity across all nodes, all time. The digest is not a pointer — it is the thing.     |
+|DNS          |Claim space registry    |Namespace resolution with versioned, chained entries. Bootstrap from genesis.                  |
+|HTTP         |Gossip + fetch pipeline |Digest announcement, selective fetch, tamper rejection at transport.                           |
+|TLS          |Ed25519 signatures      |Cross-node identity verification without shared secrets.                                       |
+|Sessions     |Persistent node identity|SQLite-backed state survives restarts. A node rejoins the mesh with full prior state.          |
+|APIs         |Executable claims       |Signed computation with input refs, result, and independent recomputation path.                |
+|Caching      |Scoped gossip           |Nodes receive only subscribed claim spaces. Bandwidth proportional to interest, not node count.|
+|CDN          |Replication layer       |Declared archive nodes with signed receipts. Durability status queryable per digest.           |
+|Search       |Query and collapse API  |Policy-collapsed answer with provenance in a single call.                                      |
+|Auth         |Identity binding        |Institutional declarations binding Ed25519 keys to institution, department, role.              |
+|Rate limiting|Sliding window counters |Per-endpoint, per-node. 429 on excess.                                                         |
+|Audit log    |Claim trail             |Every publish, witness, and challenge automatically appended. Queryable by digest.             |
 
-# Publish a claim
-curl -X POST http://localhost:18080/publish \
-  -H "Content-Type: application/json" \
-  -d '{
-    "claim_space": "anka.interpretive.econ",
-    "subject": "GDP_Q3_2026",
-    "predicate": "forecast_growth",
-    "object": "2.3",
-    "evidence_refs": ["labor_data:v1"],
-    "timestamp_unix_secs": 1775710900
-  }'
+These are not features. They are web primitives — the minimum set required for AI systems to coordinate at scale without a trusted intermediary.
 
-# Query the collapsed result with provenance
-curl http://localhost:18080/query/anka.interpretive.econ/GDP_Q3_2026
+-----
 
-# Inspect the full audit trail
-curl http://localhost:18080/audit/trail/{digest_hex}
-```
+## What ANKA Is Not
 
-The published claim is automatically gossiped to peers, fetched, verified against its digest, and witnessed. The query endpoint returns the policy-collapsed answer with scores and full provenance in a single call.
+- Not a model. ANKA does not run inference.
+- Not a platform. ANKA does not host agents.
+- Not a blockchain. ANKA does not require global consensus. Divergence in interpretive domains is preserved, not resolved.
+- Not a database. ANKA does not require a trusted operator. Any node can verify any claim against its digest without asking permission.
+- Not a RAG system. ANKA does not retrieve documents. It routes verifiable claims with intrinsic provenance.
 
 -----
 
@@ -69,7 +72,7 @@ The published claim is automatically gossiped to peers, fetched, verified agains
 identity = H(canonical object)
 ```
 
-Every object in ANKA has an identity that is its content. The digest is not a pointer — it *is* the thing. Two objects with the same digest are the same object. An object with a different digest is a different object. There is no indirection, no mutable reference, no update-in-place.
+Every object in ANKA has an identity that is its content. The digest is not a pointer — it is the thing. Two objects with the same digest are the same object. An object with a different digest is a different object. There is no indirection, no mutable reference, no update-in-place.
 
 **H** is SHA-256 over the canonical JSON serialization of the object. The hash function is declared in the genesis registry and is not extensible at runtime. A claim space that uses a different hash function is a different claim space, not a version of this one. Identity is not parameterized.
 
@@ -83,19 +86,19 @@ This gives the network three properties that HTTP cannot provide:
 
 ## Architecture
 
-ANKA is an epistemic routing layer. The network object is not content — it is *verifiable claim state*.
+ANKA is an epistemic routing layer. The network object is not content — it is verifiable claim state.
 
 ### Claims
 
-A claim is a signed statement: a subject, a predicate, an object, a set of evidence references, an issuer identity, and a timestamp. The claim is canonically serialized and hashed to produce its digest. The issuer signs the digest. The envelope — claim plus digest plus signature — is the atomic unit of the network.
+A claim is a signed statement: a subject, a predicate, an object, a set of evidence references, an issuer identity, and a timestamp. The claim is canonically serialized and hashed to produce its digest. The issuer signs the digest with their Ed25519 private key. The envelope — claim plus digest plus signature — is the atomic unit of the network.
 
 ```
-ClaimSet:  claim_space / subject / predicate / object / evidence_refs / issuer_node_id / timestamp / signature
+ClaimEnvelope:  claim_space / subject / predicate / object / evidence_refs / issuer_node_id / timestamp / digest / signature
 ```
 
 ### Gossip
 
-Nodes gossip digests, not payloads. When a node publishes a claim, it announces the digest to its peers. Peers fetch the full envelope only if the claim falls within their declared subscription. This is the difference between a mesh and a broadcast network — at agent scale, no node should receive every claim from every space.
+Nodes gossip digests, not payloads. When a node publishes a claim, it announces the digest to peers. Peers fetch the full envelope only if the claim falls within their declared subscription. At agent scale, no node should receive every claim from every space. Bandwidth is proportional to interest, not node count.
 
 ```
 GossipDigest:  digest_hex / claim_space / issuer_node_id / witness_count
@@ -105,7 +108,7 @@ GossipDigest:  digest_hex / claim_space / issuer_node_id / witness_count
 
 A witness is not an endorsement. A `WitnessAttestation` with `validation_type: structural` means exactly one thing: “I fetched this object, recomputed its digest, verified the issuer’s signature, and confirmed the schema.” It says nothing about whether the claim is true.
 
-This distinction is load-bearing. The witness layer is the verification layer. A node that witnesses without recomputing is penalized at three times the rate of a publisher whose claim is later challenged — because a lazy witness corrupts the only thing the network relies on for integrity.
+This distinction is load-bearing. A node that witnesses without recomputing is penalized at three times the rate of a publisher whose claim is later challenged — because a lazy witness corrupts the only thing the network relies on for integrity.
 
 ```
 WitnessAttestation:  digest_hex / witness_node_id / validation_type / timestamp / signature
@@ -113,7 +116,7 @@ WitnessAttestation:  digest_hex / witness_node_id / validation_type / timestamp 
 
 ### Challenges
 
-A node that disputes a claim cannot simply assert disagreement. It must produce a signed `Challenge` with a declared kind and evidence. Challenges are replayable — any node can fetch a challenge, verify the challenger’s signature, and evaluate the evidence independently. Dispute history is intrinsic to the claim.
+A node that disputes a claim must produce a signed `Challenge` with a declared kind and evidence. Challenges are replayable — any node can fetch a challenge, verify the signature, and evaluate the evidence independently. Dispute history is intrinsic to the claim.
 
 ```
 Challenge:  target_digest / challenger_node_id / kind / evidence / timestamp / signature
@@ -125,7 +128,7 @@ Challenge kinds: `DigestMismatch` `InvalidSignature` `InvalidSchema` `MissingEvi
 
 An executable claim carries a computation, not just a value. The expression, the input refs it consumed, and the result are all signed and digest-bound. A validator node fetches the input refs, re-runs the expression, and independently verifies the result. A mismatch produces a challenge against the issuer.
 
-Structural witnessing and execution verification are separate acts. A structural witness faces no penalty if an executable claim later fails recomputation — that challenge is against the claim’s issuer. A node that wishes to attest both structural validity and execution correctness issues two attestations with distinct `validation_type` values: `structural` and `compute`.
+Structural witnessing and execution verification are separate acts. A node that attests both issues two attestations with distinct `validation_type` values: `structural` and `compute`.
 
 ```
 ExecClaim:  claim_space / subject / predicate / expr / exec_kind / input_refs / result / issuer / timestamp
@@ -143,19 +146,17 @@ The most important design decision in ANKA is the formal distinction between two
 
 **Interpretive spaces** admit only policy-relative canonicalization. Economic forecasts, medical findings, legal interpretation, scientific consensus in contested domains. No global canonical truth exists. Competing claims coexist indefinitely. A claim set in an interpretive space is not a problem to be resolved — it is a faithful representation of genuine epistemic disagreement.
 
-A `Resolution` object type was considered and rejected. It would introduce a false appearance of global settlement in domains where no global settlement exists. Instead, resolution happens at the **policy layer**: each consuming node applies its own declared collapse policy to the witness weights, reputation scores, and challenge history the substrate provides. The substrate preserves divergence. The policy node decides what to act on.
-
-The same subject in different claim spaces never collides. Namespace isolation is enforced at the registry layer.
+A `Resolution` object type was considered and rejected. Resolution happens at the policy layer: each consuming node applies its own declared collapse policy to the witness weights, reputation scores, and challenge history the substrate provides. The substrate preserves divergence. The policy node decides what to act on.
 
 -----
 
-## Trust Without Centralization
+## Trust Model
 
-ANKA’s trust model is not permissionless — nodes have declared identities. But it is not permissioned in the traditional sense either. Verifiability is open: any node can verify any object against its digest and the issuer’s known public identity. Authority to publish does not imply authority to be believed.
+ANKA’s trust model is not permissionless — nodes have declared identities. But it is not permissioned in the traditional sense. Verifiability is open: any node can verify any object against its digest and the issuer’s public key. Authority to publish does not imply authority to be believed.
 
-Reputation is earned per claim space, not globally. A node with high reputation in cryptographic attestation carries no automatic weight in economic forecasting. Reputation decays under failure, floors at zero weight (discredited nodes become silent, not adversarial), and is isolated across spaces.
+Reputation is earned per claim space, not globally. A node with high reputation in cryptographic attestation carries no automatic weight in economic forecasting. Reputation decays under failure, floors at zero, and is isolated across spaces.
 
-Witness weight is reputation-derived. Collapse in interpretive spaces is weighted by the accumulated verification history of the witnessing nodes. The network produces local canonical projections — `Z^(policy)` — not a single global truth.
+Witness weight is reputation-derived. Collapse in interpretive spaces is weighted by the accumulated verification history of the witnessing nodes. The network produces local canonical projections — not a single global truth.
 
 -----
 
@@ -167,15 +168,11 @@ Witness weight is reputation-derived. Collapse in interpretive spaces is weighte
   then H(C) = d
 ```
 
-No node can smuggle an object under the wrong digest. No node can witness without recomputing. No node can challenge without a signed reason. No node can rewrite history without producing a new digest.
-
-This is enforced at the transport layer. Tampered envelopes are rejected before acceptance. Unknown peers are rejected before processing. The invariant is structural, not policy.
+No node can smuggle an object under the wrong digest. No node can witness without recomputing. No node can challenge without a signed reason. No node can rewrite history without producing a new digest. This is enforced at the transport layer, not by policy.
 
 -----
 
 ## Node Roles
-
-Nodes declare roles as signed objects. Role declarations are verifiable by any peer.
 
 |Role     |Permitted Operations                     |
 |---------|-----------------------------------------|
@@ -185,81 +182,133 @@ Nodes declare roles as signed objects. Role declarations are verifiable by any p
 |Archive  |sync, snapshot                           |
 |Policy   |collapse, sync                           |
 
-The origin node defines the genesis registry, publishes the first claim spaces, and witnesses the initial protocol objects. It is the trust anchor for the mesh — not by fiat, but because its genesis object is verifiable by any joining node against its declared digest.
+Role declarations are signed objects verifiable by any peer. The origin node is the trust anchor for the mesh — not by fiat, but because its genesis object is verifiable by any joining node against its declared digest.
 
 -----
 
 ## Network Properties
 
-**Partition tolerance.** When two nodes partition and publish competing claims on the same subject, both claims survive. On partition heal, `exchange_once` synchronizes known digests bidirectionally. No claim is silently dropped. The resulting claim set contains both, with their full witness and challenge histories intact.
+**Partition tolerance.** When two nodes partition and publish competing claims on the same subject, both claims survive. On heal, `exchange_once` synchronizes bidirectionally. No claim is silently dropped.
 
-**Scoped gossip.** Nodes declare subscriptions to specific claim spaces. Gossip is filtered at the sender — a validator specializing in cryptographic proofs does not receive economic forecast digests. At agent scale this is not an optimization; it is a requirement.
+**Scoped gossip.** Nodes declare subscriptions. Gossip is filtered at the sender. At agent scale this is not an optimization — it is a requirement.
 
-**Convergence.** Two nodes that have exchanged all relevant claims produce identical claim sets for any given subject and claim space. Convergence is a provable property of the sync protocol, not an eventual consistency hope.
+**Convergence.** Two nodes that have exchanged all relevant claims produce identical claim sets for any given subject and claim space. Convergence is a provable property of the sync protocol.
 
-**Persistence.** Live node processes back state to SQLite. Identity, claim store, witness log, challenge log, peer list, and registry survive process restarts. A node that restarts rejoins the mesh with full prior state.
+**Persistence.** Live node processes back state to SQLite. Identity, claim store, witness log, challenge log, peer list, registry, and audit archive survive process restarts.
 
 -----
 
-## Implementation
+## What Is Proven
 
-164 tests. 3,301 lines of [Fard](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
+164 tests passing. 3,301 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
-**Scoped gossip verified across live 5-node mesh.** Nodes with `econ.space` subscriptions receive only economic claims. Nodes with `science.space` subscriptions receive only science claims. Wildcard nodes receive both. Science-only nodes receive zero economic claims and vice versa. The mesh scales by interest — nodes receive only what they declare they want. This is not a simulation.
+- **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention.
+- **Scoped gossip across live mesh.** Econ-subscribed nodes receive zero science claims. Science-subscribed nodes receive zero econ claims. Wildcard nodes receive both. Bandwidth is proportional to subscription, not mesh size.
+- **Policy-collapsed answers with provenance.** `GET /query/{claim_space}/{subject}` returns the winner, scores, and full provenance of all competing claims in a single call.
+- **Full audit trail.** Every publish, witness, and challenge automatically appended to the claim trail. Queryable by digest via `GET /audit/trail/{digest}`.
+- **Ed25519 across the full protocol.** Every claim, witness, challenge, role declaration, collapse result, and replication receipt is signed with an asymmetric key. Cross-node verification requires no shared secret.
+- **Registry bootstrap.** A node joining cold fetches the genesis registry from the origin and discovers all registered claim spaces via chain-verified sync.
+- **Partition and heal.** No claims silently dropped after partition. Full convergence after heal.
+- **Adversarial simulation.** Lazy witnesses, droppers, and honest nodes coexist. Penalty model enforced. Convergence measured.
 
-**5-node live mesh verified.** Five separate processes, five separate SQLite databases, five separate node identities. One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness — without manual intervention. 5/5 nodes converge. 4/5 issue structural witnesses (the publisher does not witness its own claims). This is not a simulation — it is five fardrun processes communicating over HTTP.
+-----
 
-The stack, bottom to top:
+## Quickstart
 
+**Requirements:** [Fard](https://github.com/mauludsadiq/FARD) runtime installed.
+
+```bash
+git clone https://github.com/mauludsadiq/Anka && cd Anka
+fardrun run --program anka/src/origin_process.fard --out out/origin &
+fardrun run --program anka/src/node_process.fard --out out/node &
+sleep 2
+
+# Register with origin
+curl -X POST http://localhost:18080/peer \
+  -H "Content-Type: application/json" \
+  -d '{"address":"http://localhost:18090"}'
+
+# Fetch claim space registry
+curl -X POST http://localhost:18080/registry/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"sender_address":"http://localhost:18090"}'
+
+# Publish a claim
+curl -X POST http://localhost:18080/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claim_space": "anka.interpretive.econ",
+    "subject": "GDP_Q3_2026",
+    "predicate": "forecast_growth",
+    "object": "2.3",
+    "evidence_refs": ["labor_data:v1"],
+    "timestamp_unix_secs": 1775710900
+  }'
+
+# Query with policy collapse and provenance
+curl http://localhost:18080/query/anka.interpretive.econ/GDP_Q3_2026
+
+# Or use the Fard SDK
+import("sdk") as sdk
+let c = sdk.client("http://localhost:18080")
+let result = sdk.query(c, "anka.interpretive.econ", "GDP_Q3_2026")
+
+# Inspect the audit trail
+curl http://localhost:18080/audit/trail/{digest_hex}
 ```
-Canonical serialization and digest
-Message signing and verification
-Transport with peer authentication and tamper rejection
-Peer sync with digest-first selective fetch
-Claim publication, gossip, and envelope acceptance
-Structural witnessing and challenge filing
-Claim sets with contradiction relations and collapse modes
-Claim space registry with versioned objects
-Context-scoped reputation with witness weight
-Semantic challenge resolution
-Weighted collapse under declared policy
-Executable claims with independent execution verification
-Partition-tolerant convergence
-Scoped gossip with subscription filtering
-Archive with claim trails and reconstruction
-Node roles with signed declarations
-Origin node with verified genesis bootstrap
-Live HTTP node processes with persistent state
-Two-node mesh with outbound gossip broadcast
+
+-----
+
+## Deployment Scenario
+
+An economics research group at Oxford and a quantitative group at MIT both use AI systems to produce GDP forecasts. They want outputs to be independently verifiable and disagreements structurally recorded.
+
+**Setup:**
+
+- Each institution runs a node process behind a TLS reverse proxy per `DEPLOYMENT.md`
+- Each node declares an identity binding its Ed25519 key to the institution, department, and role
+- Both nodes register with a shared origin and fetch the claim space registry
+- Each subscribes to `anka.interpretive.econ`
+
+**Operation:**
+
+- Oxford’s AI publishes its forecast as a signed claim. MIT’s AI publishes its.
+- Each node’s validator automatically fetches, verifies, and witnesses the other’s claim
+- Reputation accumulates per-node per-claim-space based on verification history
+
+**Query:**
+
+```bash
+GET /query/anka.interpretive.econ/GDP_Q3_2026
 ```
 
-Each layer enforces its own invariant. No layer trusts the one below blindly.
+Returns both forecasts, their witness scores, the policy winner, and the full provenance of each. Any downstream system — including another AI — can verify the result independently against the digest.
+
+No central coordinator. No shared database. No trust assumption beyond the genesis registry.
+
+-----
 
 ## Why Not X
 
-**Why not a database?** A database requires a trusted operator. Any node can query ANKA without trusting the node it queries — the claim’s digest is its verification. The operator cannot tamper with a claim without producing a new digest that won’t match what peers have already witnessed.
+**Why not a database?** Requires a trusted operator. In ANKA, the claim’s digest is its verification. No operator can tamper with a claim without producing a new digest that won’t match what peers have already witnessed.
 
-**Why not IPFS or a content-addressed store?** IPFS addresses content but adds no epistemic layer. It cannot tell you who made a claim, whether it was independently verified, or whether it was contested. ANKA adds witnessing, challenge, reputation, and policy-collapsed consensus on top of content addressing.
+**Why not IPFS?** IPFS addresses content but adds no epistemic layer. It cannot tell you who made a claim, whether it was independently verified, or whether it was contested.
 
-**Why not a blockchain?** Blockchains require global consensus, which is expensive and slow, and they treat all claims as equivalent. ANKA explicitly preserves disagreement in interpretive domains — a competing forecast is not a conflict to resolve, it is information to retain. Collapse happens at the policy layer per consuming node, not globally.
+**Why not a blockchain?** Blockchains require global consensus, which is expensive and slow, and treat all claims as equivalent. ANKA explicitly preserves disagreement in interpretive domains. Collapse happens at the policy layer per consuming node, not globally.
 
-**Why not a vector database with citations?** Citation tracking is append-only and passive. ANKA is active — nodes recompute results, issue signed attestations, file structured challenges. A claim’s witness history reflects actual independent verification, not just storage.
+**Why not a vector database with citations?** Citation tracking is passive. ANKA is active — nodes recompute results, issue signed attestations, file structured challenges. A claim’s witness history reflects actual independent verification.
 
-**Why now?** AI systems are moving from single-model outputs to multi-agent pipelines where claims pass between systems with no attestation. The attack surface for hallucinated provenance is growing faster than the tools to detect it. ANKA is the missing substrate layer.
-
------
+**Why now?** AI systems are moving from single-model outputs to multi-agent pipelines where claims pass between systems with no attestation. The attack surface for hallucinated provenance is growing faster than the tools to detect it.
 
 -----
 
 ## Node API
 
-Every live node exposes the following HTTP endpoints.
-
 **Claims**
 
 ```
 POST /publish                          Publish a signed claim to the mesh
-GET  /claim/{digest}                   Fetch a specific claim envelope by digest
+GET  /claim/{digest}                   Fetch a claim envelope by digest
 GET  /query/{claim_space}/{subject}    Policy-collapsed answer with full provenance
 POST /gossip                           Receive a gossip digest from a peer
 POST /fetch                            Fetch, verify, and witness a claim by digest
@@ -292,9 +341,9 @@ POST /registry/gossip                  Receive a registry gossip notification
 **Audit and State**
 
 ```
-GET  /audit                            Archive summary (snapshot count, receipt count)
-GET  /audit/trail/{digest}             Full epistemic trail for a claim digest
-GET  /sync                             Node state summary (claim, witness, challenge counts)
+GET  /audit                            Archive summary
+GET  /audit/trail/{digest}             Full epistemic trail for a claim
+GET  /sync                             Node state summary
 GET  /known                            List of all known digests
 GET  /health                           Node health and identity
 ```
@@ -310,69 +359,25 @@ fardrun run --program anka/src/origin_process.fard --out out/origin
 # Start a mesh node
 fardrun run --program anka/src/node_process.fard --out out/node
 
-# Run a parameterized simulation
-fardrun run --program anka/src/sim_runner.fard --out out/sim
-
 # Run the full test suite
 fardrun test --program anka/tests/test_anka_layer1.fard
 ```
 
------
-
-## Deployment Scenario
-
-A computational economics group at Oxford and a quantitative research group at MIT both use AI systems to produce GDP forecasts. They want their outputs to be independently verifiable and their disagreements to be structurally recorded.
-
-**Setup (one hour):**
-
-- Each institution runs a node process behind a TLS-terminating reverse proxy per `DEPLOYMENT.md`
-- Each node declares an identity binding its Ed25519 key to the institution and department
-- Both nodes register with a shared origin node and fetch the claim space registry
-- Each node subscribes to `anka.interpretive.econ`
-
-**Operation:**
-
-- Oxford’s AI publishes its forecast as a signed claim. MIT’s AI publishes its.
-- Each node’s validator automatically fetches, verifies, and witnesses the other’s claim
-- Reputation accumulates per-node per-claim-space based on verification history
-- A policy node applies weighted collapse under declared rules
-
-**Consumption:**
-
-```bash
-GET /query/anka.interpretive.econ/GDP_Q3_2026
-```
-
-Returns: both forecasts, their witness scores, the policy winner, and the full provenance of each — issuer identity, evidence references, timestamps, verification history. Any downstream system, including another AI, can verify the result independently against the digest.
-
-**No central coordinator. No shared database. No trust assumption beyond the genesis registry.**
+See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institutional bootstrap.
 
 -----
-
-## What ANKA Is For
-
-ANKA is a substrate where divergent intelligent agents can coordinate without pretending to a unitary reality, while converging where it matters.
-
-The internet assumes a human at the end of every chain — someone who reads, judges, and takes responsibility. AI systems cannot operate on that assumption. They need a network where:
-
-- **Provenance is intrinsic.** Not metadata attached elsewhere. Not a trusted intermediary vouching. The claim carries its own origin, evidence, and verification history.
-- **Disagreement is preserved faithfully.** When two research groups produce conflicting findings, both survive in the mesh — with their full evidence and witness histories — until a consuming agent applies its own declared policy to decide what to act on.
-- **Verification is computable.** A validator node doesn’t read a claim and trust it. It fetches the evidence references, re-runs the computation, and independently confirms the result. A mismatch produces a signed challenge that any other node can verify.
-- **Coordination happens without consensus.** Interpretive domains — science, economics, law, medicine — don’t converge to a single truth. ANKA doesn’t pretend they do. It preserves the divergence and makes the structure of disagreement legible.
-
-The intended deployment contexts are institutions where AI systems generate high-stakes claims: research universities, hospitals, financial institutions, legal systems. A claim about a drug interaction, an economic forecast, a legal interpretation, a code verification result. Any of these needs provenance, witness history, and contestation records that survive the lifecycle of the claim — not just the session that produced it.
-
-The substrate is complete. What comes next is the application layer.
 
 ## What Comes Next
 
-**AI audit trail adapter.** A wrapper that intercepts an LLM’s generation, packages the prompt, inference parameters, and output as an `ExecClaim`, submits it to ANKA, and returns the claim digest alongside the response. Any downstream system can verify the claim’s provenance and check its witness history before acting on it.
+The substrate is complete. What comes next is the application layer.
 
-**Verifiable RAG.** An agent that refuses to cite a source unless its claim digest has at least three structural witnesses and no open challenges younger than the network’s convergence time. The citation carries a digest, not a URL. The reader can independently verify.
+**AI audit trail adapter.** A wrapper that intercepts an LLM’s generation, packages the prompt, inference parameters, and output as an `ExecClaim`, submits it to ANKA, and returns the claim digest alongside the response. Any downstream system can verify the claim’s provenance before acting on it.
 
-**Multi-institutional mesh.** Separate machines, separate operators, separate claim spaces. A node at Oxford and a node at MIT exchange claims over HTTPS, verify each other’s signatures without shared secrets, and produce policy-collapsed answers under each institution’s declared rules. No central coordinator.
+**Verifiable RAG.** An agent that refuses to cite a source unless its claim digest has at least three structural witnesses and no open challenges younger than the network’s convergence time. The citation carries a digest, not a URL.
 
-**Economic security layer.** In a permissioned institutional mesh, reputation and identity declarations provide sufficient Sybil resistance. For open participation, a staking and slashing layer — publish stakes, witness stakes, challenge stakes — makes bad behavior costly without requiring trust.
+**Multi-institutional mesh.** Separate machines, separate operators, separate claim spaces. A node at Oxford and a node at MIT exchange claims over HTTPS, verify each other’s signatures without shared secrets, and produce policy-collapsed answers under each institution’s declared rules.
+
+**Economic security layer.** For open participation beyond permissioned institutional meshes: publish stakes, witness stakes, challenge stakes. Bad behavior becomes costly without requiring trust.
 
 # License
 
