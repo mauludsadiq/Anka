@@ -1,0 +1,56 @@
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+// Sliding window rate limiter.
+// Tracks request counts per key (node_id or IP) per time window.
+// Window size in seconds. Max requests per window.
+
+fn make_limiter(window_secs, max_requests) {
+  { window_secs: window_secs, max_requests: max_requests }
+}
+
+fn window_key(key, now_secs, window_secs) {
+  let window_id = now_secs / window_secs in
+  str.concat([key, ":", str.from(window_id)])
+}
+
+fn check_and_increment(limiter, counts, key, now_secs) {
+  let wkey = window_key(key, now_secs, limiter.window_secs) in
+  let current = rec.getOr(counts, wkey, 0) in
+  if current >= limiter.max_requests then
+    { allowed: false, count: current, limit: limiter.max_requests, counts: counts }
+  else
+    let next_counts = rec.set(counts, wkey, current + 1) in
+    { allowed: true, count: current + 1, limit: limiter.max_requests, counts: next_counts }
+}
+
+fn is_allowed(limiter, counts, key, now_secs) {
+  let wkey = window_key(key, now_secs, limiter.window_secs) in
+  let current = rec.getOr(counts, wkey, 0) in
+  current < limiter.max_requests
+}
+
+fn prune_old_windows(counts, now_secs, window_secs) {
+  let current_window = now_secs / window_secs in
+  let keep_current = str.concat([":", str.from(current_window)]) in
+  let keep_prev = str.concat([":", str.from(current_window - 1)]) in
+  let keys = rec.keys(counts) in
+  list.fold(keys, counts, fn(acc, k) {
+    if str.contains(k, keep_current) || str.contains(k, keep_prev) then acc
+    else rec.remove(acc, k)
+  })
+}
+
+fn default_limits() {
+  {
+    publish: make_limiter(60, 100),
+    gossip: make_limiter(60, 500),
+    witness: make_limiter(60, 200),
+    challenge: make_limiter(60, 50),
+    fetch: make_limiter(60, 300),
+    query: make_limiter(60, 200)
+  }
+}
+
+export { make_limiter, window_key, check_and_increment, is_allowed, prune_old_windows, default_limits }

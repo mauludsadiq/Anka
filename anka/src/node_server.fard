@@ -13,8 +13,12 @@ import("scoped_gossip") as sg
 import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
+import("rate_limit") as rl
+import("std/datetime") as dt
 import("weighted_collapse") as wc
 import("claim_set") as cset
+import("rate_limit") as rl
+import("std/datetime") as dt
 
 fn json_response(state, peers, local_address, registry, subscriptions, arc, data) {
   { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
@@ -33,6 +37,9 @@ fn in_scope(subscriptions, claim_space) {
 }
 
 fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
+  let now = dt.now() in
+  let limits = rl.default_limits() in
+  let rate_counts = rec.getOr(state, "rate_counts", {}) in
   if req.path == "/health" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, node_id: state.node_id })
   else if req.path == "/known" && req.method == "GET" then
@@ -72,6 +79,10 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     else
       json_response(state, peers, local_address, registry, subscriptions, arc, { ok: false, reason: fetch_result.reason })
   else if req.path == "/publish" && req.method == "POST" then
+    let rate_check = rl.check_and_increment(limits.publish, rate_counts, state.node_id, now) in
+    if !rate_check.allowed then
+      error_response(state, peers, local_address, registry, subscriptions, arc, 429, "rate limit exceeded: publish")
+    else
     let body = json.decode(req.body) in
     let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
     let _ = dialer.broadcast_gossip(peers, pub.gossip, local_address) in
@@ -84,6 +95,10 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     else
       error_response(state, peers, local_address, registry, subscriptions, arc, 404, "claim not found")
   else if req.path == "/gossip" && req.method == "POST" then
+    let rate_check = rl.check_and_increment(limits.gossip, rate_counts, req.body, now) in
+    if !rate_check.allowed then
+      error_response(state, peers, local_address, registry, subscriptions, arc, 429, "rate limit exceeded: gossip")
+    else
     let body = json.decode(req.body) in
     let scoped = in_scope(subscriptions, body.claim_space) in
     let needs_fetch = scoped && !node.has_claim(state, body.digest_hex) && has_sender(body) in
@@ -106,6 +121,10 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     let arc2 = arch.record_claim_trail(arc, body.digest_hex, "witnessed", { witness: body.witness_node_id, validation_type: body.validation_type }, body.timestamp_unix_secs) in
     json_response(next, peers, local_address, registry, subscriptions, arc2, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
+    let rate_check = rl.check_and_increment(limits.challenge, rate_counts, state.node_id, now) in
+    if !rate_check.allowed then
+      error_response(state, peers, local_address, registry, subscriptions, arc, 429, "rate limit exceeded: challenge")
+    else
     let body = json.decode(req.body) in
     let next = node.receive_challenge(state, body) in
     let arc2 = arch.record_claim_trail(arc, body.target_digest_hex, "challenged", { challenger: body.challenger_node_id, kind: body.kind }, body.timestamp_unix_secs) in

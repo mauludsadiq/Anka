@@ -1,0 +1,53 @@
+import("../src/rate_limit") as rl
+import("std/rec") as rec
+import("std/list") as list
+
+test "request within limit is allowed" {
+  let limiter = rl.make_limiter(60, 10) in
+  let counts = {} in
+  let result = rl.check_and_increment(limiter, counts, "node-a", 1000) in
+  result.allowed && result.count == 1
+}
+
+test "request at limit is rejected" {
+  let limiter = rl.make_limiter(60, 3) in
+  let r1 = rl.check_and_increment(limiter, {}, "node-a", 1000) in
+  let r2 = rl.check_and_increment(limiter, r1.counts, "node-a", 1000) in
+  let r3 = rl.check_and_increment(limiter, r2.counts, "node-a", 1000) in
+  let r4 = rl.check_and_increment(limiter, r3.counts, "node-a", 1000) in
+  r1.allowed && r2.allowed && r3.allowed && !r4.allowed
+}
+
+test "different keys have independent limits" {
+  let limiter = rl.make_limiter(60, 2) in
+  let r1 = rl.check_and_increment(limiter, {}, "node-a", 1000) in
+  let r2 = rl.check_and_increment(limiter, r1.counts, "node-a", 1000) in
+  let r3 = rl.check_and_increment(limiter, r2.counts, "node-b", 1000) in
+  !rl.is_allowed(limiter, r2.counts, "node-a", 1000) && r3.allowed
+}
+
+test "new time window resets count" {
+  let limiter = rl.make_limiter(60, 2) in
+  let r1 = rl.check_and_increment(limiter, {}, "node-a", 1000) in
+  let r2 = rl.check_and_increment(limiter, r1.counts, "node-a", 1000) in
+  let r3 = rl.check_and_increment(limiter, r2.counts, "node-a", 1060) in
+  !rl.is_allowed(limiter, r2.counts, "node-a", 1000) && r3.allowed
+}
+
+test "is_allowed checks without incrementing" {
+  let limiter = rl.make_limiter(60, 5) in
+  let counts = {} in
+  rl.is_allowed(limiter, counts, "node-a", 1000) && rl.is_allowed(limiter, counts, "node-a", 1000)
+}
+
+test "default limits are configured" {
+  let limits = rl.default_limits() in
+  limits.publish.max_requests == 100 && limits.gossip.max_requests == 500 && limits.challenge.max_requests == 50
+}
+
+test "prune removes old windows" {
+  let limiter = rl.make_limiter(60, 10) in
+  let r1 = rl.check_and_increment(limiter, {}, "node-a", 1000) in
+  let pruned = rl.prune_old_windows(r1.counts, 2000, 60) in
+  list.len(rec.keys(pruned)) == 0
+}
