@@ -71,12 +71,12 @@ BOB_DIGEST=$(curl -s -X POST http://localhost:18081/publish   -H "Content-Type: 
 ok "Bob published replication: ${DIM}${BOB_DIGEST}${RESET}"
 echo ""
 
-sleep 3
+sleep 4
 
 say "Querying the mesh for Alice's finding..."
 echo ""
 
-RESULT=$(curl -s "http://localhost:18080/query/research.result.claims/climate-sensitivity-2026")
+RESULT=$(curl -s "http://localhost:18081/query/research.result.claims/climate-sensitivity-2026")
 WINNER=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_value'])")
 SCORE=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_score'])")
 COUNT=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['claim_count'])")
@@ -100,7 +100,7 @@ echo "  ${BOLD}Cite as:${RESET}     $REPRO_CITE"
 echo ""
 
 say "Fetching audit trail for Alice's claim..."
-TRAIL=$(curl -s "http://localhost:18080/audit/trail/${ALICE_DIGEST}")
+TRAIL=$(curl -s "http://localhost:18081/audit/trail/${ALICE_DIGEST}")
 PUB=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['history']['published_count'])")
 WIT=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['history']['witness_count'])")
 
