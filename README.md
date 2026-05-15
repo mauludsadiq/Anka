@@ -4,8 +4,8 @@
 
 Written in [Fard](https://github.com/mauludsadiq/FARD).
 
-![Tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C226-blue)
+![Tests](https://img.shields.io/badge/tests-164%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-3%2C301-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Roadmap](https://img.shields.io/badge/roadmap-8%2F8%20phases-brightgreen)
 ![Status](https://img.shields.io/badge/status-active-success)
@@ -164,7 +164,7 @@ The origin node defines the genesis registry, publishes the first claim spaces, 
 
 ## Implementation
 
-157 tests. 3,226 lines of [Fard](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
+164 tests. 3,301 lines of [Fard](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
 
 **Scoped gossip verified across live 5-node mesh.** Nodes with `econ.space` subscriptions receive only economic claims. Nodes with `science.space` subscriptions receive only science claims. Wildcard nodes receive both. Science-only nodes receive zero economic claims and vice versa. The mesh scales by interest — nodes receive only what they declare they want. This is not a simulation.
 
