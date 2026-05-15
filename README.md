@@ -150,6 +150,15 @@ Collapse happens at the policy layer per consuming node. The substrate preserves
 
 ## Quickstart
 
+**Try the demo first**
+
+```bash
+git clone https://github.com/mauludsadiq/Anka && cd Anka
+bash demo.sh
+```
+
+Two researchers. One research finding. Independent replication. Verifiable result. ~45 seconds from cold start. No configuration required.
+
 **Option 1: Docker**
 
 ```bash
