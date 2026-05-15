@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: anka-client
+Version: 0.1.0
+Summary: Python client SDK for ANKA nodes
+Author: Maulud Sadiq
+License: MIT
+Keywords: anka,ai,agents,claims,gossip,provenance
+Classifier: Development Status :: 3 - Alpha
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Intended Audience :: Developers
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
