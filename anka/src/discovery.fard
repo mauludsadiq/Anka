@@ -22,7 +22,9 @@ fn entry_digest(entry) {
     node_id: entry.node_id,
     public_key_hex: entry.public_key_hex,
     address: entry.address,
-    institution: entry.institution
+    institution: entry.institution,
+    department: entry.department,
+    role: entry.role
   }))
 }
 
@@ -34,13 +36,25 @@ fn sign_entry(entry, private_key_hex) {
 }
 
 fn verify_entry(signed_entry) {
-  let expected_digest = entry_digest(signed_entry) in
-  let digest_ok = expected_digest == signed_entry.digest_hex in
+  let schema_ok =
+    rec.has(signed_entry, "node_id") &&
+    rec.has(signed_entry, "public_key_hex") &&
+    rec.has(signed_entry, "address") &&
+    rec.has(signed_entry, "institution") &&
+    rec.has(signed_entry, "department") &&
+    rec.has(signed_entry, "role") &&
+    rec.has(signed_entry, "digest_hex") &&
+    rec.has(signed_entry, "signature_hex") &&
+    str.starts_with(signed_entry.node_id, "ed25519:") &&
+    str.starts_with(signed_entry.digest_hex, "sha256:") &&
+    signed_entry.node_id == str.concat(["ed25519:", signed_entry.public_key_hex]) in
+  let expected_digest = if schema_ok then entry_digest(signed_entry) else "sha256:invalid" in
+  let digest_ok = schema_ok && expected_digest == signed_entry.digest_hex in
   let sig_ok = if digest_ok then
     let raw = kp.strip_prefix(signed_entry.digest_hex) in
     kp.verify(signed_entry.public_key_hex, raw, signed_entry.signature_hex)
   else false in
-  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+  { valid: schema_ok && digest_ok && sig_ok, schema_ok: schema_ok, digest_ok: digest_ok, signature_ok: sig_ok }
 }
 
 fn make_registry(entries, issuer_node_id, timestamp_unix_secs) {
@@ -52,34 +66,59 @@ fn make_registry(entries, issuer_node_id, timestamp_unix_secs) {
   }
 }
 
+fn valid_entries(entries) {
+  list.filter(entries, fn(e) {
+    let report = verify_entry(e) in
+    report.valid
+  })
+}
+
+fn sorted_entries(entries) {
+  entries
+}
+
+fn canonical_entries(entries) {
+  sorted_entries(valid_entries(entries))
+}
+
 fn registry_digest(registry) {
   canon.digest_text(json.canonicalize({
-    entries: registry.entries,
+    entries: canonical_entries(registry.entries),
     issuer_node_id: registry.issuer_node_id,
     timestamp_unix_secs: registry.timestamp_unix_secs
   }))
 }
 
 fn sign_registry(registry, private_key_hex) {
-  let digest_hex = registry_digest(registry) in
+  let canonical_registry = {
+    ...registry,
+    entries: canonical_entries(registry.entries),
+    entry_count: list.len(canonical_entries(registry.entries))
+  } in
+  let digest_hex = registry_digest(canonical_registry) in
   let raw = kp.strip_prefix(digest_hex) in
   let sig = kp.sign(private_key_hex, raw) in
-  { registry: registry, digest_hex: digest_hex, signature_hex: sig }
+  { registry: canonical_registry, digest_hex: digest_hex, signature_hex: sig }
 }
 
 fn verify_registry(envelope, issuer_public_key_hex) {
-  let digest_ok = registry_digest(envelope.registry) == envelope.digest_hex in
+  let entries_valid = list.all(envelope.registry.entries, fn(e) {
+    let report = verify_entry(e) in
+    report.valid
+  }) in
+  let count_ok = envelope.registry.entry_count == list.len(envelope.registry.entries) in
+  let digest_ok = entries_valid && count_ok && registry_digest(envelope.registry) == envelope.digest_hex in
   let sig_ok = if digest_ok then
     let raw = kp.strip_prefix(envelope.digest_hex) in
     kp.verify(issuer_public_key_hex, raw, envelope.signature_hex)
   else false in
-  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+  { valid: digest_ok && sig_ok, entries_valid: entries_valid, count_ok: count_ok, digest_ok: digest_ok, signature_ok: sig_ok }
 }
 
 fn fetch_discovery(discovery_url) {
   let result = http.get(discovery_url) in
   if result.status == 200 then
-    { ok: true, envelope: json.decode(result.body) }
+    { ok: true, envelope: json.decode(result.body).envelope }
   else
     { ok: false, reason: str.concat(["fetch failed: ", str.from(result.status)]) }
 }
@@ -90,12 +129,38 @@ fn peers_from_registry(envelope, self_node_id) {
     let report = verify_entry(e) in
     report.valid && e.node_id != self_node_id
   }) in
-  list.map(verified, fn(e) { e.address })
+  list.dedupe(list.map(verified, fn(e) { e.address }))
+}
+
+fn peer_entries_from_registry(envelope, self_node_id) {
+  list.filter(envelope.registry.entries, fn(e) {
+    let report = verify_entry(e) in
+    report.valid && e.node_id != self_node_id
+  })
+}
+
+fn upsert_entry(registry, entry) {
+  let report = verify_entry(entry) in
+  if !report.valid then
+    { registry: registry, accepted: false, reason: "invalid entry" }
+  else
+    let without = list.filter(registry.entries, fn(e) { e.node_id != entry.node_id }) in
+    let next_entries = canonical_entries(list.append(without, entry)) in
+    {
+      registry: { ...registry, entries: next_entries, entry_count: list.len(next_entries) },
+      accepted: true,
+      reason: "accepted"
+    }
 }
 
 fn add_entry(registry, entry) {
-  let next_entries = list.append(registry.entries, entry) in
-  { ...registry, entries: next_entries, entry_count: list.len(next_entries) }
+  upsert_entry(registry, entry).registry
+}
+
+fn merge_registries(left, right) {
+  list.fold(right.entries, left, fn(acc, e) {
+    upsert_entry(acc, e).registry
+  })
 }
 
 fn find_entry(registry, node_id) {
@@ -103,7 +168,15 @@ fn find_entry(registry, node_id) {
 }
 
 fn institutions(registry) {
-  list.dedupe(list.map(registry.entries, fn(e) { e.institution }))
+  list.dedupe(list.map(canonical_entries(registry.entries), fn(e) { e.institution }))
 }
 
-export { make_node_entry, entry_digest, sign_entry, verify_entry, make_registry, registry_digest, sign_registry, verify_registry, fetch_discovery, peers_from_registry, add_entry, find_entry, institutions }
+fn bootstrap_peer_list(discovery_envelope, self_node_id, issuer_public_key_hex) {
+  let report = verify_registry(discovery_envelope, issuer_public_key_hex) in
+  if report.valid then
+    { ok: true, peers: peers_from_registry(discovery_envelope, self_node_id), entries: peer_entries_from_registry(discovery_envelope, self_node_id) }
+  else
+    { ok: false, peers: [], entries: [], reason: "invalid discovery registry" }
+}
+
+export { make_node_entry, entry_digest, sign_entry, verify_entry, make_registry, valid_entries, canonical_entries, registry_digest, sign_registry, verify_registry, fetch_discovery, peers_from_registry, peer_entries_from_registry, upsert_entry, add_entry, merge_registries, find_entry, institutions, bootstrap_peer_list }

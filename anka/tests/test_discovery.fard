@@ -69,3 +69,54 @@ test "entry digest is stable" {
   let d2 = disc.entry_digest(entry) in
   d1 == d2 && str.starts_with(d1, "sha256:")
 }
+
+test "upsert replaces existing node entry" {
+  let n = node.new_node("oxford") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n.node_id, n.public_key_hex, "https://old.ox.ac.uk", "Oxford", "Econ", "validator"), n.node_secret) in
+  let e2 = disc.sign_entry(disc.make_node_entry(n.node_id, n.public_key_hex, "https://new.ox.ac.uk", "Oxford", "Econ", "validator"), n.node_secret) in
+  let r0 = disc.make_registry([e1], n.node_id, 1) in
+  let up = disc.upsert_entry(r0, e2) in
+  let found = disc.find_entry(up.registry, n.node_id) in
+  up.accepted && up.registry.entry_count == 1 && found.some.address == "https://new.ox.ac.uk"
+}
+
+test "invalid entry is rejected by upsert" {
+  let n = node.new_node("oxford") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n.node_id, n.public_key_hex, "https://old.ox.ac.uk", "Oxford", "Econ", "validator"), n.node_secret) in
+  let bad = { ...e1, address: "https://evil.example" } in
+  let r0 = disc.make_registry([], n.node_id, 1) in
+  let up = disc.upsert_entry(r0, bad) in
+  !up.accepted && up.registry.entry_count == 0
+}
+
+test "merge registries combines verified entries" {
+  let n1 = node.new_node("oxford") in
+  let n2 = node.new_node("mit") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n1.node_id, n1.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator"), n1.node_secret) in
+  let e2 = disc.sign_entry(disc.make_node_entry(n2.node_id, n2.public_key_hex, "https://anka.mit.edu", "MIT", "CSAIL", "validator"), n2.node_secret) in
+  let r1 = disc.make_registry([e1], n1.node_id, 1) in
+  let r2 = disc.make_registry([e2], n1.node_id, 2) in
+  let merged = disc.merge_registries(r1, r2) in
+  merged.entry_count == 2 && disc.find_entry(merged, n2.node_id).some.address == "https://anka.mit.edu"
+}
+
+test "bootstrap peer list verifies registry before returning peers" {
+  let origin = node.new_node("origin") in
+  let n1 = node.new_node("oxford") in
+  let n2 = node.new_node("mit") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n1.node_id, n1.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator"), n1.node_secret) in
+  let e2 = disc.sign_entry(disc.make_node_entry(n2.node_id, n2.public_key_hex, "https://anka.mit.edu", "MIT", "CSAIL", "validator"), n2.node_secret) in
+  let envelope = disc.sign_registry(disc.make_registry([e1, e2], origin.node_id, 10), origin.node_secret) in
+  let boot = disc.bootstrap_peer_list(envelope, n1.node_id, origin.public_key_hex) in
+  boot.ok && list.len(boot.peers) == 1 && boot.peers[0] == "https://anka.mit.edu"
+}
+
+test "bootstrap peer list rejects invalid registry signature" {
+  let origin = node.new_node("origin") in
+  let fake = node.new_node("fake") in
+  let n1 = node.new_node("oxford") in
+  let e1 = disc.sign_entry(disc.make_node_entry(n1.node_id, n1.public_key_hex, "https://anka.ox.ac.uk", "Oxford", "Econ", "validator"), n1.node_secret) in
+  let envelope = disc.sign_registry(disc.make_registry([e1], fake.node_id, 10), fake.node_secret) in
+  let boot = disc.bootstrap_peer_list(envelope, n1.node_id, origin.public_key_hex) in
+  !boot.ok && list.len(boot.peers) == 0
+}
