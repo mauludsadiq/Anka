@@ -1,0 +1,86 @@
+#!/bin/bash
+set -e
+
+ALICE=${ALICE:-http://localhost:18080}
+BOB=${BOB:-http://localhost:18081}
+ORIGIN=${ORIGIN:-http://localhost:18090}
+
+echo ""
+echo "=== ANKA Reproducibility Demo ==="
+echo "Alice: $ALICE"
+echo "Bob:   $BOB"
+echo ""
+
+echo "=> Bootstrapping registries from origin..."
+curl -s -X POST $ALICE/registry/fetch   -H "Content-Type: application/json"   --data "{"sender_address":"$ORIGIN"}" > /dev/null
+curl -s -X POST $BOB/registry/fetch   -H "Content-Type: application/json"   --data "{"sender_address":"$ORIGIN"}" > /dev/null
+
+echo "=> Connecting Alice and Bob as peers..."
+curl -s -X POST $ALICE/peer   -H "Content-Type: application/json"   --data "{"address":"$BOB"}" > /dev/null
+curl -s -X POST $BOB/peer   -H "Content-Type: application/json"   --data "{"address":"$ALICE"}" > /dev/null
+echo "✓ Mesh established"
+echo ""
+
+echo "=> Alice publishes her research finding..."
+echo "   Claim space: research.result.claims"
+echo "   Subject:     climate-sensitivity-2026"
+echo "   Finding:     3.2C per doubling of CO2"
+
+ALICE_DIGEST=$(curl -s -X POST $ALICE/publish   -H "Content-Type: application/json"   --data '"'"'{"claim_space":"research.result.claims","subject":"climate-sensitivity-2026","predicate":"reported_finding","object":"3.2C per doubling of CO2","evidence_refs":["ipcc_ar7:draft","model:claude-sonnet-4"],"timestamp_unix_secs":1775710900}'"'"'   | python3 -c "import sys,json; print(json.load(sys.stdin)['"'"'digest_hex'"'"'])")
+
+echo "✓ Alice published: $ALICE_DIGEST"
+echo ""
+
+sleep 3
+
+echo "=> Bob independently replicates Alice's finding..."
+echo "   Publishing to: reproducibility.results"
+
+BOB_DIGEST=$(curl -s -X POST $BOB/publish   -H "Content-Type: application/json"   --data "{"claim_space":"reproducibility.results","subject":"climate-sensitivity-2026","predicate":"independently_replicated","object":"confirmed:3.2C per doubling of CO2","evidence_refs":["bob_model:v2","ipcc_ar7:draft"],"timestamp_unix_secs":1775710960}"   | python3 -c "import sys,json; print(json.load(sys.stdin)['"'"'digest_hex'"'"'])")
+
+echo "✓ Bob published replication: $BOB_DIGEST"
+echo ""
+
+sleep 4
+
+echo "=> Querying the mesh for Alice's finding (from Bob's node)..."
+RESULT=$(curl -s "$BOB/query/research.result.claims/climate-sensitivity-2026")
+WINNER=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_value'"'"'])")
+SCORE=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_score'"'"'])")
+CITE="anka:$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_digest_hex'"'"'])")"
+
+echo ""
+echo "  Finding:  $WINNER"
+echo "  Score:    $SCORE witnesses"
+echo "  Cite as:  $CITE"
+echo ""
+
+echo "=> Querying Bob's replication result..."
+REPRO=$(curl -s "$BOB/query/reproducibility.results/climate-sensitivity-2026")
+REPRO_VAL=$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_value'"'"'])" 2>/dev/null || echo "pending")
+REPRO_CITE="anka:$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_digest_hex'"'"'])" 2>/dev/null || echo "pending")"
+
+echo ""
+echo "  Replication: $REPRO_VAL"
+echo "  Cite as:     $REPRO_CITE"
+echo ""
+
+echo "=> Fetching audit trail for Alice's claim (from Bob's node)..."
+TRAIL=$(curl -s "$BOB/audit/trail/${ALICE_DIGEST}")
+PUB=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'history'"'"']['"'"'published_count'"'"'])")
+WIT=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'history'"'"']['"'"'witness_count'"'"'])")
+
+echo "  Published: $PUB event(s)"
+echo "  Witnessed: $WIT event(s)"
+echo "  Digest:    $ALICE_DIGEST"
+echo ""
+
+echo "=== Demo complete ==="
+echo ""
+echo "Alice published a research finding."
+echo "Bob independently replicated it."
+echo "Both results are signed, content-addressed, and queryable."
+echo "The mesh converged without a central coordinator."
+echo ""
+echo "Alice dashboard: $ALICE/dashboard"
+echo "Bob dashboard:   $BOB/dashboard"

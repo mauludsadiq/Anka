@@ -6,6 +6,10 @@ RUN curl -fsSL https://github.com/mauludsadiq/FARD/releases/download/v1.6.1/fard
 
 WORKDIR /anka
 COPY anka/ ./anka/
+COPY docker-demo.sh /anka/docker-demo.sh
+COPY docker-entrypoint.sh /anka/docker-entrypoint.sh
+COPY docker-demo.sh /anka/docker-demo.sh
+COPY docker-entrypoint.sh /anka/docker-entrypoint.sh
 
 RUN mkdir -p out/node out/origin out/policy
 

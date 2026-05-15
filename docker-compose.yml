@@ -8,45 +8,43 @@ services:
       - "18090:18090"
     volumes:
       - origin_data:/anka/out/origin
-    environment:
-      - ANKA_NODE_NAME=anka-origin
-      - ANKA_NODE_PORT=18090
-      - ANKA_NODE_ADDRESS=http://origin:18090
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:18090/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      test: ["CMD", "curl", "-sf", "http://localhost:18090/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
-  node:
+  alice:
     build: .
     command: fardrun run --program anka/src/node_process.fard --out out/node
     ports:
       - "18080:18080"
     volumes:
-      - node_data:/anka/out/node
-    environment:
-      - ANKA_NODE_NAME=anka-node
-      - ANKA_NODE_PORT=18080
-      - ANKA_NODE_ADDRESS=http://node:18080
+      - alice_data:/anka/out/node
     depends_on:
       origin:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:18080/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
-  node_b:
+  bob:
     build: .
     command: fardrun run --program anka/src/node_process_b.fard --out out/node
     ports:
       - "18081:18081"
     volumes:
-      - node_b_data:/anka/out/node
-    environment:
-      - ANKA_NODE_NAME=anka-node-b
-      - ANKA_NODE_PORT=18081
-      - ANKA_NODE_ADDRESS=http://node_b:18081
+      - bob_data:/anka/out/node
     depends_on:
       origin:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:18081/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
   policy:
     build: .
@@ -59,8 +57,21 @@ services:
       origin:
         condition: service_healthy
 
+  demo:
+    build: .
+    command: bash /anka/docker-demo.sh
+    depends_on:
+      alice:
+        condition: service_healthy
+      bob:
+        condition: service_healthy
+    environment:
+      - ALICE=http://alice:18080
+      - BOB=http://bob:18081
+      - ORIGIN=http://origin:18090
+
 volumes:
   origin_data:
-  node_data:
-  node_b_data:
+  alice_data:
+  bob_data:
   policy_data:
