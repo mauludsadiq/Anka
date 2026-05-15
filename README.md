@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-178%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C641-blue)
+![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-3%2C719-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -58,39 +58,57 @@ These are not features. They are web primitives — the minimum set required for
 
 **Substrate layer — complete and tested.**
 
-164 tests passing across 27 test files. 3,500 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
+187 tests passing across 29 test files. 3,719 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
 **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention. No central coordinator.
 
-**Scoped gossip at scale.** Econ-subscribed nodes receive zero science claims. Science-subscribed nodes receive zero econ claims. Wildcard nodes receive both. Bandwidth is proportional to subscription, not mesh size. This is not an optimization — at agent scale it is a requirement.
+**Scoped gossip at scale.** Econ-subscribed nodes receive zero science claims. Science-subscribed nodes receive zero econ claims. Wildcard nodes receive both. Bandwidth is proportional to subscription, not mesh size.
 
-**Ed25519 across the full protocol.** Every claim, witness, challenge, role declaration, collapse result, and replication receipt is signed with an asymmetric key. A node at Oxford verifies a claim from MIT without any shared secret — only the signer’s public key, derivable from their declared node identity.
+**Ed25519 across the full protocol.** Every claim, witness, challenge, role declaration, collapse result, and replication receipt is signed with an asymmetric key. A node at Oxford verifies a claim from MIT without any shared secret.
 
-**Automatic audit trail.** Every publish, witness, and challenge is automatically appended to the claim trail. Queryable by digest. Full epistemic history survives the session, the process restart, and the node operator.
+**Automatic audit trail.** Every publish, witness, and challenge automatically appended to the claim trail. Queryable by digest. Full epistemic history survives process restarts.
 
-**Policy-collapsed answers with provenance.** `GET /query/{claim_space}/{subject}` returns the winner, scores, and full provenance of all competing claims in a single call. The consumer decides whether to trust the answer based on the witness history, not on the node’s word.
+**Policy-collapsed answers with provenance.** `GET /query/{claim_space}/{subject}` returns the winner, scores, and full provenance of all competing claims in a single call.
 
-**Registry bootstrap.** A node joining cold fetches the genesis registry from the origin and discovers all registered claim spaces via chain-verified sync. No manual configuration.
+**Registry bootstrap with nine canonical claim spaces.** A node joining cold fetches the genesis registry and discovers all registered spaces via chain-verified sync:
+
+|Claim Space                |Type        |Policy       |Purpose                                                       |
+|---------------------------|------------|-------------|--------------------------------------------------------------|
+|`anka.invariant.crypto`    |invariant   |single-winner|Cryptographic proofs and attestations                         |
+|`anka.invariant.compute`   |invariant   |single-winner|Deterministic computation results                             |
+|`anka.interpretive.econ`   |interpretive|plural       |Economic forecasts and models                                 |
+|`anka.interpretive.science`|interpretive|plural       |Scientific findings and forecasts                             |
+|`fard.execution.receipts`  |invariant   |single-winner|Execution receipts and deterministic replay artifacts         |
+|`dataset.provenance`       |invariant   |single-winner|Dataset identity, source lineage, content-addressed provenance|
+|`model.training.trace`     |invariant   |single-winner|Training traces, checkpoints, optimizer events, run receipts  |
+|`research.result.claims`   |interpretive|plural       |Research findings, reported metrics, interpretations          |
+|`reproducibility.results`  |invariant   |single-winner|Independent reproduction attempts and verification outcomes   |
 
 **Institutional identity binding.** Nodes declare signed identity objects binding their Ed25519 key to institution, department, and role. Verifiable by any peer. Optionally countersigned by the origin node.
 
+**Discovery registry.** The origin serves `GET /discovery` — a signed registry of institutional nodes. Any node registers via `POST /discovery/register` with a valid Ed25519-signed entry. Any joining node fetches the registry, verifies every entry against its declared public key, and bootstraps peer connections automatically.
+
+**Dashboard.** `GET /dashboard` on any node serves a live operator UI — claims, witnesses, digests, peers, registry spaces, and audit trail. No build chain, no npm, no separate process.
+
 **Rate limiting.** Sliding window counters per endpoint. 429 on excess. Configurable per deployment.
 
-**SDK.** `sdk.fard` exposes the full node API as importable functions. Any Fard program can interact with an ANKA mesh in three lines.
+**SDK.** `sdk.fard` exposes the full node API as importable Fard functions. Any Fard program can interact with an ANKA mesh in three lines.
 
-**Dashboard.** `GET /dashboard` on any node serves a live operator UI — claims, witnesses, digests, peers, registry, and audit trail. No build chain, no npm, no separate process. Ships with every node.
+**Agent adapter.** `agent.fard` provides `publish_llm_output`, `verified_query`, and `cite` — the three operations an AI system needs to participate in the mesh.
 
-**Agent adapter.** `agent.fard` provides `publish_llm_output`, `verified_query`, and `cite` — the three operations an AI system needs to participate in the mesh. Publish an output as a verifiable claim. Query with a minimum witness threshold. Fetch a claim by digest and get its full provenance.
+**Python verifier.** `anka_sdk/anka/verifier.py` — Python-side verification of executable claims, including runtime digest, stdout digest, and independent recomputation.
+
+**Docker.** `docker-compose up` starts origin, two mesh nodes, and a policy node. No Fard runtime required.
 
 -----
 
 ## What This Enables
 
-**Verifiable AI outputs.** Any AI system can publish its output as a signed claim and receive a digest — a stable, verifiable identity for that output that any other system can check.
+**Verifiable AI outputs.** Any AI system publishes its output as a signed claim and receives a digest — a stable, verifiable identity for that output that any other system can check.
 
 ```
-let result = agent.publish_llm_output(client, "econ.space", "GDP_Q3",
-  "forecast", llm_output, ["model:gpt-4o", "data:labor_v1"])
+let result = agent.publish_llm_output(client, "research.result.claims", "climate-sensitivity-2026",
+  "reported_finding", llm_output, ["ipcc_ar7:draft", "model:gpt-4o"])
 result.cite_as  =>  "anka:sha256:..."
 ```
 
@@ -98,7 +116,9 @@ result.cite_as  =>  "anka:sha256:..."
 
 **Cross-institutional claim coordination.** Two research groups at different institutions publish competing findings. Both survive in the mesh with their full evidence and witness histories. A consuming system applies its own declared policy to decide what to act on. No central arbiter.
 
-**Executable claims with independent verification.** A node publishes a computation — not just its result, but the expression, input refs, and output. Any validator node recomputes independently. A mismatch produces a signed challenge that any other node can verify.
+**Reproducibility as a first-class primitive.** A result published to `research.result.claims` can be independently replicated and the replication outcome published to `reproducibility.results`. The two claims are linked by subject. Any node can query both and compare.
+
+**Dataset and model provenance.** Training data published to `dataset.provenance`, training runs published to `model.training.trace`. The full lineage of a model — from data to checkpoint — is queryable as a chain of verifiable claims.
 
 -----
 
@@ -108,7 +128,7 @@ result.cite_as  =>  "anka:sha256:..."
 identity = H(canonical object)
 ```
 
-Every object in ANKA has an identity that is its content. H is SHA-256 over the canonical JSON serialization. The digest is not a pointer — it is the thing. Two objects with the same digest are the same object. Tamper with the content and you produce a new digest that does not match what peers have witnessed.
+Every object in ANKA has an identity that is its content. H is SHA-256 over the canonical JSON serialization. The digest is not a pointer — it is the thing. Tamper with the content and you produce a new digest that does not match what peers have already witnessed.
 
 This gives the network three properties HTTP cannot provide:
 
@@ -120,19 +140,17 @@ This gives the network three properties HTTP cannot provide:
 
 ## Claim Spaces
 
-The most important design decision in ANKA is the formal distinction between two kinds of epistemic domain.
-
 **Invariant spaces** admit objective canonicalization. Cryptographic proofs, compiler outputs, deterministic execution traces. Two honest nodes running the same verification always reach the same conclusion.
 
-**Interpretive spaces** admit only policy-relative canonicalization. Economic forecasts, medical findings, legal interpretation, scientific consensus in contested domains. No global canonical truth exists. Competing claims coexist indefinitely. The claim set is not a problem to be resolved — it is a faithful representation of genuine epistemic disagreement.
+**Interpretive spaces** admit only policy-relative canonicalization. Economic forecasts, medical findings, legal interpretation, scientific consensus in contested domains. Competing claims coexist indefinitely. The claim set is not a problem to be resolved — it is a faithful representation of genuine epistemic disagreement.
 
-A Resolution object type was considered and rejected. Collapse happens at the policy layer per consuming node. The substrate preserves divergence. What to act on is a local decision under declared rules.
+Collapse happens at the policy layer per consuming node. The substrate preserves divergence. What to act on is a local decision under declared rules.
 
 -----
 
 ## Quickstart
 
-**Option 1: Docker (recommended)**
+**Option 1: Docker**
 
 ```bash
 git clone https://github.com/mauludsadiq/Anka && cd Anka
@@ -146,7 +164,6 @@ Starts origin, two mesh nodes, and a policy node. No Fard runtime required.
 ```bash
 git clone https://github.com/mauludsadiq/Anka && cd Anka
 
-# Start origin and a mesh node
 fardrun run --program anka/src/origin_process.fard --out out/origin &
 fardrun run --program anka/src/node_process.fard --out out/node &
 sleep 2
@@ -160,16 +177,19 @@ curl -X POST http://localhost:18080/registry/fetch \
 curl -X POST http://localhost:18080/publish \
   -H "Content-Type: application/json" \
   -d '{
-    "claim_space": "anka.interpretive.econ",
-    "subject": "GDP_Q3_2026",
-    "predicate": "forecast_growth",
-    "object": "2.3",
-    "evidence_refs": ["labor_data:v1"],
+    "claim_space": "research.result.claims",
+    "subject": "climate-sensitivity-2026",
+    "predicate": "reported_finding",
+    "object": "3.2C per doubling",
+    "evidence_refs": ["ipcc_ar7:draft"],
     "timestamp_unix_secs": 1775710900
   }'
 
 # Query with collapse and provenance
-curl http://localhost:18080/query/anka.interpretive.econ/GDP_Q3_2026
+curl http://localhost:18080/query/research.result.claims/climate-sensitivity-2026
+
+# Open the dashboard
+open http://localhost:18080/dashboard
 ```
 
 Or via the Fard SDK:
@@ -179,8 +199,8 @@ import("sdk") as sdk
 import("agent") as agent
 
 let c = sdk.client("http://localhost:18080")
-let result = agent.publish_llm_output(c, "anka.interpretive.econ",
-  "GDP_Q3_2026", "forecast_growth", "2.3", ["labor_data:v1"])
+let result = agent.publish_llm_output(c, "research.result.claims",
+  "climate-sensitivity-2026", "reported_finding", "3.2C per doubling", ["ipcc_ar7:draft"])
 result.cite_as
 ```
 
@@ -221,13 +241,21 @@ GET  /registry                         Local registry snapshot
 POST /registry/fetch                   Fetch and apply registry from a peer
 ```
 
-**Audit**
+**Audit and State**
 
 ```
 GET  /audit                            Archive summary
 GET  /audit/trail/{digest}             Full epistemic trail for a claim
 GET  /sync                             Node state summary
 GET  /health                           Node health and identity
+GET  /dashboard                        Live operator dashboard
+```
+
+**Discovery (origin node)**
+
+```
+GET  /discovery                        Signed registry of institutional nodes
+POST /discovery/register               Register a new institutional node
 ```
 
 -----
@@ -235,12 +263,13 @@ GET  /health                           Node health and identity
 ## Running the Tests
 
 ```bash
-# Unit and protocol tests (no live node required)
+# Protocol tests (no live node required)
 fardrun test --program anka/tests/test_anka_layer1.fard
 fardrun test --program anka/tests/test_keypair.fard
 fardrun test --program anka/tests/test_identity.fard
+fardrun test --program anka/tests/test_discovery.fard
 
-# Integration tests (requires live node)
+# Integration tests (requires live node on port 18080)
 fardrun run --program anka/src/node_process.fard --out out/node &
 sleep 2
 fardrun test --program anka/tests/test_sdk_integration.fard
