@@ -10,6 +10,8 @@ COPY docker-demo.sh /anka/docker-demo.sh
 COPY docker-entrypoint.sh /anka/docker-entrypoint.sh
 COPY docker-demo.sh /anka/docker-demo.sh
 COPY docker-entrypoint.sh /anka/docker-entrypoint.sh
+COPY docker-demo.sh /anka/docker-demo.sh
+COPY docker-entrypoint.sh /anka/docker-entrypoint.sh
 
 RUN mkdir -p out/node out/origin out/policy
 
