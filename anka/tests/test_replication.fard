@@ -6,7 +6,7 @@ import("std/rec") as rec
 test "replication declaration signs and verifies" {
   let n = node.new_node("publisher") in
   let env = rep.make_replication_declaration(n.node_id, ["http://archive-a:18083", "http://archive-b:18083"], 1000, n.node_secret) in
-  let report = rep.verify_replication_declaration(env, n.node_secret) in
+  let report = rep.verify_replication_declaration(env, n.public_key_hex) in
   report.valid && report.digest_ok && report.signature_ok
 }
 
@@ -15,14 +15,14 @@ test "tampered replication declaration fails verification" {
   let env = rep.make_replication_declaration(n.node_id, ["http://archive-a:18083"], 1000, n.node_secret) in
   let bad_decl = { ...env.declaration, archive_addresses: ["http://attacker:18083"] } in
   let bad_env = { ...env, declaration: bad_decl } in
-  let report = rep.verify_replication_declaration(bad_env, n.node_secret) in
+  let report = rep.verify_replication_declaration(bad_env, n.public_key_hex) in
   !report.valid && !report.digest_ok
 }
 
 test "replication receipt signs and verifies" {
   let archive = node.new_node("archive") in
   let env = rep.make_replication_receipt(archive.node_id, "sha256:abc", "sha256:issuer", 1000, archive.node_secret) in
-  let report = rep.verify_replication_receipt(env, archive.node_secret) in
+  let report = rep.verify_replication_receipt(env, archive.public_key_hex) in
   report.valid && report.digest_ok && report.signature_ok
 }
 
@@ -31,7 +31,7 @@ test "tampered replication receipt fails verification" {
   let env = rep.make_replication_receipt(archive.node_id, "sha256:abc", "sha256:issuer", 1000, archive.node_secret) in
   let bad_receipt = { ...env.receipt, digest_hex: "sha256:tampered" } in
   let bad_env = { ...env, receipt: bad_receipt } in
-  let report = rep.verify_replication_receipt(bad_env, archive.node_secret) in
+  let report = rep.verify_replication_receipt(bad_env, archive.public_key_hex) in
   !report.valid && !report.digest_ok
 }
 

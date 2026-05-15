@@ -30,7 +30,7 @@ fn run_scenario(scenario) {
   let witness_results = list.map(scenario.witnesses, fn(w) {
     let witness_rec = find_node_rec(w.witness) in
     let target_pub = find_pub(w.target_issuer) in
-    let result = node.structurally_witness(witness_rec.node, target_pub.envelope, target_pub.node.node_secret, w.timestamp_unix_secs) in
+    let result = node.structurally_witness(witness_rec.node, target_pub.envelope, target_pub.node.public_key_hex, w.timestamp_unix_secs) in
     { witness_id: w.witness, target_issuer: w.target_issuer, result: result }
   }) in
   let reputation1 = list.fold(witness_results, reputation0, fn(r, w) {

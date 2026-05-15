@@ -72,10 +72,10 @@ fn schema_valid_exec_claim(ec) {
   (ec.exec_kind == "arithmetic" || ec.exec_kind == "inference" || ec.exec_kind == "threshold" || ec.exec_kind == "derived")
 }
 
-fn verify_exec_envelope(envelope, issuer_secret) {
+fn verify_exec_envelope(envelope, issuer_public_key_hex) {
   let schema_ok = schema_valid_exec_claim(envelope.exec_claim) in
   let digest_ok = if schema_ok then digest_exec_claim(envelope.exec_claim) == envelope.digest_hex else false in
-  let sig_ok = if digest_ok then canon.verify_structural_signature(issuer_secret, envelope.digest_hex, envelope.issuer_signature_hex) else false in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(issuer_public_key_hex, envelope.digest_hex, envelope.issuer_signature_hex) else false in
   {
     accepted: schema_ok && digest_ok && sig_ok,
     schema_ok: schema_ok,

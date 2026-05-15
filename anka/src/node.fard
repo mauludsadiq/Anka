@@ -2,18 +2,21 @@ import("std/list") as list
 import("std/rec") as rec
 import("std/str") as str
 import("std/hash") as hash
+import("keypair") as kp
 import("std/rand") as rand
 import("claim") as claim
 import("gossip") as gossip
 import("witness") as witness
 import("challenge") as challenge
+import("keypair") as kp
 
 fn new_node(name) {
-  let secret = hash.sha256_text(str.concat(["anka-node-secret:", name])) in
-  let node_id = hash.sha256_text(str.concat(["anka-node-id:", secret])) in
+  let seed = str.concat(["anka-node-seed:", name]) in
+  let pair = kp.generate_keypair(seed) in
   {
-    node_id: node_id,
-    node_secret: secret,
+    node_id: pair.node_id,
+    node_secret: pair.private_key_hex,
+    public_key_hex: pair.public_key_hex,
     claims: {},
     witnesses: {},
     challenges: {},
@@ -30,7 +33,7 @@ fn publish(node, claim_space, subject, predicate, object, evidence_refs, timesta
   {
     node: node2,
     envelope: env,
-    gossip: gossip.from_envelope(env, 0)
+    gossip: gossip.from_envelope(env, 0, timestamp_unix_secs)
   }
 }
 
@@ -48,8 +51,8 @@ fn receive_gossip(node, g) {
   { ...node, known_digests: known2 }
 }
 
-fn accept_envelope(node, envelope, issuer_secret) {
-  let report = claim.verify_envelope(envelope, issuer_secret) in
+fn accept_envelope(node, envelope, issuer_public_key_hex) {
+  let report = claim.verify_envelope(envelope, issuer_public_key_hex) in
   if report.accepted then {
     node: { ...node, claims: rec.set(node.claims, envelope.digest_hex, envelope) },
     report: report
@@ -59,8 +62,8 @@ fn accept_envelope(node, envelope, issuer_secret) {
   }
 }
 
-fn structurally_witness(node, envelope, issuer_secret, timestamp_unix_secs) {
-  let report = claim.verify_envelope(envelope, issuer_secret) in
+fn structurally_witness(node, envelope, issuer_public_key_hex, timestamp_unix_secs) {
+  let report = claim.verify_envelope(envelope, issuer_public_key_hex) in
   if report.accepted then {
     accepted: true,
     node: { ...node, witnesses: rec.set(node.witnesses, envelope.digest_hex, witness.make_witness(envelope.digest_hex, node.node_id, "structural", timestamp_unix_secs, node.node_secret)) },
@@ -113,11 +116,12 @@ fn node_summary(node) {
 
 
 fn new_node_generated() {
-  let secret = rand.uuid_v4() in
-  let node_id = hash.sha256_text(str.concat(["anka-node-id:", secret])) in
+  let seed = rand.uuid_v4() in
+  let pair = kp.generate_keypair(seed) in
   {
-    node_id: node_id,
-    node_secret: secret,
+    node_id: pair.node_id,
+    node_secret: pair.private_key_hex,
+    public_key_hex: pair.public_key_hex,
     claims: {},
     witnesses: {},
     challenges: {},

@@ -23,9 +23,9 @@ fn make_challenge(target_digest_hex, challenger_node_id, kind, evidence, timesta
   }
 }
 
-fn verify_challenge(c, challenger_secret) {
+fn verify_challenge(c, challenger_public_key_hex) {
   let body_digest = canon.digest_text(challenge_body(c.target_digest_hex, c.challenger_node_id, c.kind, c.evidence, c.timestamp_unix_secs)) in
-  canon.verify_structural_signature(challenger_secret, body_digest, c.signature_hex)
+  canon.verify_structural_signature(challenger_public_key_hex, body_digest, c.signature_hex)
 }
 
 export { challenge_body, make_challenge, verify_challenge }

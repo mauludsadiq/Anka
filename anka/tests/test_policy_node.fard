@@ -26,7 +26,7 @@ test "collapse result signs and verifies" {
   let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
   let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope], [], rep.empty(), n.node_id, "plural", 101) in
   let envelope = policy.sign_collapse_result(result, n.node_secret) in
-  let report = policy.verify_collapse_result(envelope, n.node_secret) in
+  let report = policy.verify_collapse_result(envelope, n.public_key_hex) in
   report.valid && report.digest_ok && report.signature_ok
 }
 
@@ -38,7 +38,7 @@ test "tampered collapse result fails verification" {
   let envelope = policy.sign_collapse_result(result, n.node_secret) in
   let bad_result = { ...envelope.result, winner_digest_hex: "sha256:tampered" } in
   let bad_envelope = { ...envelope, result: bad_result } in
-  let report = policy.verify_collapse_result(bad_envelope, n.node_secret) in
+  let report = policy.verify_collapse_result(bad_envelope, n.public_key_hex) in
   !report.valid && !report.digest_ok
 }
 

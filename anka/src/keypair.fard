@@ -1,0 +1,56 @@
+import("std/crypto") as crypto
+import("std/hash") as hash
+import("std/str") as str
+import("std/json") as json
+
+fn strip_prefix(hex_with_prefix) {
+  str.slice(hex_with_prefix, 7, str.len(hex_with_prefix))
+}
+
+fn generate_keypair(seed) {
+  let raw = hash.sha256_text(seed) in
+  let private_key_hex = strip_prefix(raw) in
+  let public_key_hex = crypto.ed25519_public_key(private_key_hex) in
+  {
+    private_key_hex: private_key_hex,
+    public_key_hex: public_key_hex,
+    node_id: str.concat(["ed25519:", public_key_hex])
+  }
+}
+
+fn sign(private_key_hex, message_hex) {
+  crypto.ed25519_sign(private_key_hex, message_hex)
+}
+
+fn verify(public_key_hex, message_hex, signature_hex) {
+  crypto.ed25519_verify(public_key_hex, message_hex, signature_hex)
+}
+
+fn sign_canonical(private_key_hex, obj) {
+  let canonical = json.canonicalize(obj) in
+  let digest_raw = hash.sha256_text(canonical) in
+  let digest_hex = strip_prefix(digest_raw) in
+  let sig = sign(private_key_hex, digest_hex) in
+  {
+    canonical: canonical,
+    digest_hex: digest_hex,
+    signature_hex: sig
+  }
+}
+
+fn verify_canonical(public_key_hex, obj, signature_hex) {
+  let canonical = json.canonicalize(obj) in
+  let digest_raw = hash.sha256_text(canonical) in
+  let digest_hex = strip_prefix(digest_raw) in
+  verify(public_key_hex, digest_hex, signature_hex)
+}
+
+fn node_id_from_public_key(public_key_hex) {
+  str.concat(["ed25519:", public_key_hex])
+}
+
+fn public_key_from_node_id(node_id) {
+  str.slice(node_id, 8, str.len(node_id))
+}
+
+export { strip_prefix, generate_keypair, sign, verify, sign_canonical, verify_canonical, node_id_from_public_key, public_key_from_node_id }

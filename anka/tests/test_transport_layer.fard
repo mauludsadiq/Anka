@@ -5,7 +5,7 @@ test "transport applies verified gossip wire from known peer" {
   let a = node.new_node("A") in
   let b = node.new_node("B") in
   let pub = node.publish(a, "demo", "subject", "predicate", "object", [], 1) in
-  let book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub.node.node_id, pub.node.node_secret)) in
+  let book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub.node.node_id, pub.node.public_key_hex)) in
   let wire = transport.make_gossip_wire(pub.node, pub.gossip, 2) in
   let rx = transport.receive_wire(book, b, wire) in
   rx.accepted == true && node.node_summary(rx.node).known_digest_count == 1
@@ -24,7 +24,7 @@ test "transport rejects tampered wire payload" {
   let a = node.new_node("A") in
   let b = node.new_node("B") in
   let pub = node.publish(a, "demo", "subject", "predicate", "object", [], 1) in
-  let book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub.node.node_id, pub.node.node_secret)) in
+  let book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub.node.node_id, pub.node.public_key_hex)) in
   let wire = transport.make_gossip_wire(pub.node, pub.gossip, 2) in
   let m = transport.message_from_wire(wire) in
   let bad = { ...m, payload: { ...m.payload, digest_hex: "sha256:bad" } } in

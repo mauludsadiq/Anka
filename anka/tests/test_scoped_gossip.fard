@@ -28,7 +28,7 @@ test "scoped gossip only sends subscribed spaces" {
   let b0 = node.new_node("scope-b2") in
   let pub_econ = node.publish(a0, "econ.space", "GDP", "forecast", "2.3", [], 100) in
   let pub_crypto = node.publish(pub_econ.node, "crypto.space", "BTC", "price", "50000", [], 101) in
-  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_crypto.node.node_id, pub_crypto.node.node_secret)) in
+  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_crypto.node.node_id, pub_crypto.node.public_key_hex)) in
   let sub_econ_only = sg.subscription_add(sg.subscription_empty(), "econ.space") in
   let result = sg.scoped_gossip_once(pub_crypto.node, b0, sub_econ_only, peer_book, 102) in
   result.sent_count == 1 && result.filtered_count == 1
@@ -39,7 +39,7 @@ test "node with wildcard subscription receives all spaces" {
   let b0 = node.new_node("scope-b3") in
   let pub_econ = node.publish(a0, "econ.space", "GDP", "forecast", "2.3", [], 100) in
   let pub_crypto = node.publish(pub_econ.node, "crypto.space", "BTC", "price", "50000", [], 101) in
-  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_crypto.node.node_id, pub_crypto.node.node_secret)) in
+  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_crypto.node.node_id, pub_crypto.node.public_key_hex)) in
   let sub_all = sg.subscription_all() in
   let result = sg.scoped_gossip_once(pub_crypto.node, b0, sub_all, peer_book, 102) in
   result.sent_count == 2 && result.filtered_count == 0
@@ -51,7 +51,7 @@ test "multi-space subscription receives only declared spaces" {
   let pub_econ = node.publish(a0, "econ.space", "GDP", "forecast", "2.3", [], 100) in
   let pub_crypto = node.publish(pub_econ.node, "crypto.space", "BTC", "price", "50000", [], 101) in
   let pub_geo = node.publish(pub_crypto.node, "geo.space", "conflict", "status", "active", [], 102) in
-  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_geo.node.node_id, pub_geo.node.node_secret)) in
+  let peer_book = transport.peer_book_add(transport.peer_book_empty(), transport.peer(pub_geo.node.node_id, pub_geo.node.public_key_hex)) in
   let sub = sg.subscription_add(sg.subscription_add(sg.subscription_empty(), "econ.space"), "crypto.space") in
   let result = sg.scoped_gossip_once(pub_geo.node, b0, sub, peer_book, 103) in
   result.sent_count == 2 && result.filtered_count == 1

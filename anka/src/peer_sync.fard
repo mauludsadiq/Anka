@@ -1,3 +1,4 @@
+import("keypair") as kp
 import("std/list") as list
 import("std/rec") as rec
 import("node") as node
@@ -30,16 +31,17 @@ fn claim_payloads_for_digests(from_node, digests) {
   }), fn(item) { item.has == true })
 }
 
-fn apply_claim_payloads(to_node, payloads, issuer_secret) {
+fn apply_claim_payloads(to_node, payloads) {
   list.fold(payloads, to_node, fn(acc, item) {
-    node.accept_envelope(acc, item.envelope, issuer_secret).node
+    let pk = kp.public_key_from_node_id(item.envelope.claim.issuer_node_id) in
+    node.accept_envelope(acc, item.envelope, pk).node
   })
 }
 
-fn sync_claims_once(from_node, to_node, issuer_secret) {
+fn sync_claims_once(from_node, to_node) {
   let plan = sync_plan(from_node, to_node) in
   let payloads = claim_payloads_for_digests(from_node, plan.missing_digests) in
-  let next_to = apply_claim_payloads(to_node, payloads, issuer_secret) in
+  let next_to = apply_claim_payloads(to_node, payloads) in
   {
     node: next_to,
     plan: plan,

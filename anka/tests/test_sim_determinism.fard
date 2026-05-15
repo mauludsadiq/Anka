@@ -1,9 +1,56 @@
 import("std/json") as json
-import("std/io") as io
 import("../src/sim") as sim
 
 test "scenario run is deterministic" {
-  let scenario = json.decode(io.read_file("anka/scenarios/scenario_econ_divergence.json").ok) in
+  let scenario = {
+    name: "economic divergence: two competing GDP forecasts",
+    nodes: [
+      { id: "node-a", collapse_policy: "plural" },
+      { id: "node-b", collapse_policy: "plural" },
+      { id: "node-c", collapse_policy: "single-winner" }
+    ],
+    claim_spaces: [
+      {
+        name: "economic_models_2026",
+        category: "interpretive",
+        convergence_policy: "plural",
+        description: "Interpretive economic forecast claims for 2026"
+      }
+    ],
+    claims: [
+      {
+        issuer: "node-a",
+        claim_space: "economic_models_2026",
+        subject: "US_GDP_Q3_2026",
+        predicate: "forecast_growth",
+        object: "2.3",
+        evidence_refs: ["labor_data:v1", "consumer_spending:v1"],
+        timestamp_unix_secs: 1775710801
+      },
+      {
+        issuer: "node-b",
+        claim_space: "economic_models_2026",
+        subject: "US_GDP_Q3_2026",
+        predicate: "forecast_growth",
+        object: "1.8",
+        evidence_refs: ["labor_data:v1", "credit_conditions:v2"],
+        timestamp_unix_secs: 1775710802
+      }
+    ],
+    witnesses: [
+      { witness: "node-c", target_issuer: "node-a", timestamp_unix_secs: 1775710803 },
+      { witness: "node-c", target_issuer: "node-b", timestamp_unix_secs: 1775710804 }
+    ],
+    challenges: [
+      {
+        challenger: "node-c",
+        target_issuer: "node-a",
+        kind: "MissingEvidenceRef",
+        evidence: "missing credit conditions model",
+        timestamp_unix_secs: 1775710805
+      }
+    ]
+  } in
   let r1 = sim.run_scenario(scenario) in
   let r2 = sim.run_scenario(scenario) in
   json.canonicalize(r1) == json.canonicalize(r2)

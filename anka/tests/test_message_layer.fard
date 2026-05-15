@@ -5,7 +5,7 @@ test "message signs and verifies canonical payload" {
   let n = node.new_node("A") in
   let payload = { digest_hex: "sha256:abc", claim_space: "demo" } in
   let m = msg.sign_message("gossip", n.node_id, n.node_secret, payload, 1) in
-  let r = msg.verify_message(m, n.node_secret) in
+  let r = msg.verify_message(m, n.public_key_hex) in
   r.accepted == true
 }
 
@@ -14,7 +14,7 @@ test "message detects payload tampering" {
   let payload = { digest_hex: "sha256:abc", claim_space: "demo" } in
   let m = msg.sign_message("gossip", n.node_id, n.node_secret, payload, 1) in
   let bad = { ...m, payload: { digest_hex: "sha256:tampered", claim_space: "demo" } } in
-  let r = msg.verify_message(bad, n.node_secret) in
+  let r = msg.verify_message(bad, n.public_key_hex) in
   r.accepted == false && r.digest_ok == false
 }
 
@@ -24,6 +24,6 @@ test "message encodes and decodes through json" {
   let m = msg.sign_message("gossip", n.node_id, n.node_secret, payload, 1) in
   let wire = msg.encode(m) in
   let decoded = msg.decode(wire) in
-  let r = msg.verify_message(decoded, n.node_secret) in
+  let r = msg.verify_message(decoded, n.public_key_hex) in
   r.accepted == true && decoded.body_digest_hex == m.body_digest_hex
 }

@@ -49,14 +49,14 @@ fn message_digest_matches(m) {
   message_body_digest(m.msg_type, m.sender_node_id, m.payload, m.timestamp_unix_secs) == m.body_digest_hex
 }
 
-fn message_signature_valid(m, sender_secret) {
-  canon.verify_structural_signature(sender_secret, m.body_digest_hex, m.signature_hex)
+fn message_signature_valid(m, sender_public_key_hex) {
+  canon.verify_structural_signature(sender_public_key_hex, m.body_digest_hex, m.signature_hex)
 }
 
-fn verify_message(m, sender_secret) {
+fn verify_message(m, sender_public_key_hex) {
   let schema_ok = schema_valid_message(m) in
   let digest_ok = if schema_ok then message_digest_matches(m) else false in
-  let signature_ok = if digest_ok then message_signature_valid(m, sender_secret) else false in
+  let signature_ok = if digest_ok then message_signature_valid(m, sender_public_key_hex) else false in
   {
     accepted: schema_ok && digest_ok && signature_ok,
     schema_ok: schema_ok,

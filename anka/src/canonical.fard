@@ -1,6 +1,7 @@
 import("std/json") as json
 import("std/hash") as hash
 import("std/str") as str
+import("std/crypto") as crypto
 
 fn canonical_claim(claim) {
   json.canonicalize({
@@ -22,12 +23,18 @@ fn digest_claim(claim) {
   digest_text(canonical_claim(claim))
 }
 
-fn structural_signature(node_secret, digest_hex) {
-  hash.sha256_text(str.concat([node_secret, ":", digest_hex]))
+fn raw_digest(digest_hex_with_prefix) {
+  str.slice(digest_hex_with_prefix, 7, str.len(digest_hex_with_prefix))
 }
 
-fn verify_structural_signature(node_secret, digest_hex, signature_hex) {
-  structural_signature(node_secret, digest_hex) == signature_hex
+fn structural_signature(private_key_hex, digest_hex) {
+  let raw = str.slice(digest_hex, 7, str.len(digest_hex)) in
+  crypto.ed25519_sign(private_key_hex, raw)
 }
 
-export { canonical_claim, digest_text, digest_claim, structural_signature, verify_structural_signature }
+fn verify_structural_signature(public_key_hex, digest_hex, signature_hex) {
+  let raw = str.slice(digest_hex, 7, str.len(digest_hex)) in
+  crypto.ed25519_verify(public_key_hex, raw, signature_hex)
+}
+
+export { canonical_claim, digest_text, digest_claim, structural_signature, verify_structural_signature, raw_digest }

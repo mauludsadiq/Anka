@@ -4,10 +4,10 @@ import("std/rec") as rec
 import("message") as message
 import("node") as node
 
-fn peer(node_id, secret) {
+fn peer(node_id, public_key_hex) {
   {
     node_id: node_id,
-    secret: secret
+    public_key_hex: public_key_hex
   }
 }
 
@@ -40,7 +40,7 @@ fn receive_wire(peer_book, local_node, wire) {
   let known_peer = peer_book_has(peer_book, m.sender_node_id) in
   if known_peer then
     let p = peer_book_get(peer_book, m.sender_node_id) in
-    let report = message.verify_message(m, p.secret) in
+    let report = message.verify_message(m, p.public_key_hex) in
     if report.accepted then
       apply_verified_message(local_node, m)
     else

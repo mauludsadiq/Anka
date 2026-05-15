@@ -22,7 +22,7 @@ test "role declaration signs and verifies" {
   let n = node.new_node("role-node") in
   let decl = role.make_role_declaration(n.node_id, "validator", ["anka.invariant.crypto"], 1000) in
   let env = role.sign_role_declaration(decl, n.node_secret) in
-  let report = role.verify_role_declaration(env, n.node_secret) in
+  let report = role.verify_role_declaration(env, n.public_key_hex) in
   report.valid && report.role == "validator"
 }
 
@@ -32,7 +32,7 @@ test "tampered role declaration fails verification" {
   let env = role.sign_role_declaration(decl, n.node_secret) in
   let bad_decl = { ...env.declaration, role: "origin" } in
   let bad_env = { ...env, declaration: bad_decl } in
-  let report = role.verify_role_declaration(bad_env, n.node_secret) in
+  let report = role.verify_role_declaration(bad_env, n.public_key_hex) in
   !report.valid && !report.digest_ok
 }
 
@@ -40,7 +40,7 @@ test "invalid role fails schema validation" {
   let n = node.new_node("role-node") in
   let decl = role.make_role_declaration(n.node_id, "supernode", [], 1000) in
   let env = role.sign_role_declaration(decl, n.node_secret) in
-  let report = role.verify_role_declaration(env, n.node_secret) in
+  let report = role.verify_role_declaration(env, n.public_key_hex) in
   !report.valid && !report.schema_ok
 }
 

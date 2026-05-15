@@ -34,7 +34,7 @@ test "exec claim signs and verifies" {
     1775710900
   ) in
   let env = exec.sign_exec_claim(ec, n.node_secret) in
-  let report = exec.verify_exec_envelope(env, n.node_secret) in
+  let report = exec.verify_exec_envelope(env, n.public_key_hex) in
   report.accepted && report.digest_ok && report.signature_ok
 }
 
@@ -54,7 +54,7 @@ test "tampered exec claim fails verification" {
   let env = exec.sign_exec_claim(ec, n.node_secret) in
   let bad_ec = { ...env.exec_claim, result: "9.99" } in
   let bad_env = { ...env, exec_claim: bad_ec } in
-  let report = exec.verify_exec_envelope(bad_env, n.node_secret) in
+  let report = exec.verify_exec_envelope(bad_env, n.public_key_hex) in
   !report.accepted && !report.digest_ok
 }
 

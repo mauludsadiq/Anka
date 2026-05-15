@@ -21,9 +21,9 @@ fn make_witness(digest_hex, witness_node_id, validation_type, timestamp_unix_sec
   }
 }
 
-fn verify_witness(w, witness_secret) {
+fn verify_witness(w, witness_public_key_hex) {
   let body_digest = canon.digest_text(witness_body(w.digest_hex, w.witness_node_id, w.validation_type, w.timestamp_unix_secs)) in
-  canon.verify_structural_signature(witness_secret, body_digest, w.signature_hex)
+  canon.verify_structural_signature(witness_public_key_hex, body_digest, w.signature_hex)
 }
 
 export { witness_body, make_witness, verify_witness }

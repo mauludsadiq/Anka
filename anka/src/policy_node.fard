@@ -43,9 +43,9 @@ fn sign_collapse_result(result, policy_node_secret) {
   }
 }
 
-fn verify_collapse_result(envelope, policy_node_secret) {
+fn verify_collapse_result(envelope, policy_public_key_hex) {
   let digest_ok = digest_collapse_result(envelope.result) == envelope.digest_hex in
-  let sig_ok = if digest_ok then canon.verify_structural_signature(policy_node_secret, envelope.digest_hex, envelope.signature_hex) else false in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(policy_public_key_hex, envelope.digest_hex, envelope.signature_hex) else false in
   { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
 }
 

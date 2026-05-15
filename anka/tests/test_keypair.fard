@@ -1,0 +1,60 @@
+import("../src/keypair") as kp
+import("std/str") as str
+
+test "keypair generates stable public key from seed" {
+  let k1 = kp.generate_keypair("institution-a-seed") in
+  let k2 = kp.generate_keypair("institution-a-seed") in
+  k1.public_key_hex == k2.public_key_hex && k1.private_key_hex == k2.private_key_hex
+}
+
+test "different seeds produce different keypairs" {
+  let k1 = kp.generate_keypair("seed-a") in
+  let k2 = kp.generate_keypair("seed-b") in
+  k1.public_key_hex != k2.public_key_hex
+}
+
+test "node id is derived from public key" {
+  let k = kp.generate_keypair("test-seed") in
+  str.starts_with(k.node_id, "ed25519:")
+}
+
+test "sign and verify round trip" {
+  let k = kp.generate_keypair("test-seed") in
+  let signed = kp.sign_canonical(k.private_key_hex, { test: "message" }) in
+  kp.verify(k.public_key_hex, signed.digest_hex, signed.signature_hex)
+}
+
+test "tampered message fails verification" {
+  let k = kp.generate_keypair("test-seed") in
+  let signed = kp.sign_canonical(k.private_key_hex, { test: "message" }) in
+  let other = kp.sign_canonical(k.private_key_hex, { test: "other" }) in
+  !kp.verify(k.public_key_hex, other.digest_hex, signed.signature_hex)
+}
+
+test "wrong public key fails verification" {
+  let k1 = kp.generate_keypair("seed-a") in
+  let k2 = kp.generate_keypair("seed-b") in
+  let signed = kp.sign_canonical(k1.private_key_hex, { test: "message" }) in
+  !kp.verify(k2.public_key_hex, signed.digest_hex, signed.signature_hex)
+}
+
+test "sign canonical object and verify" {
+  let k = kp.generate_keypair("test-seed") in
+  let obj = { claim_space: "econ.space", subject: "GDP", value: "2.3" } in
+  let signed = kp.sign_canonical(k.private_key_hex, obj) in
+  kp.verify_canonical(k.public_key_hex, obj, signed.signature_hex)
+}
+
+test "tampered canonical object fails verification" {
+  let k = kp.generate_keypair("test-seed") in
+  let obj = { claim_space: "econ.space", subject: "GDP", value: "2.3" } in
+  let signed = kp.sign_canonical(k.private_key_hex, obj) in
+  let tampered = { claim_space: "econ.space", subject: "GDP", value: "9.9" } in
+  !kp.verify_canonical(k.public_key_hex, tampered, signed.signature_hex)
+}
+
+test "public key roundtrips through node id" {
+  let k = kp.generate_keypair("test-seed") in
+  let recovered = kp.public_key_from_node_id(k.node_id) in
+  recovered == k.public_key_hex
+}

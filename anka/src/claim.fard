@@ -30,8 +30,8 @@ fn envelope_digest_matches(envelope) {
   canon.digest_claim(envelope.claim) == envelope.digest_hex
 }
 
-fn envelope_signature_valid(envelope, issuer_secret) {
-  canon.verify_structural_signature(issuer_secret, envelope.digest_hex, envelope.issuer_signature_hex)
+fn envelope_signature_valid(envelope, issuer_public_key_hex) {
+  canon.verify_structural_signature(issuer_public_key_hex, envelope.digest_hex, envelope.issuer_signature_hex)
 }
 
 fn schema_valid_claim(claim) {
@@ -55,10 +55,10 @@ fn schema_valid_envelope(envelope) {
   str.starts_with(envelope.digest_hex, "sha256:")
 }
 
-fn verify_envelope(envelope, issuer_secret) {
+fn verify_envelope(envelope, issuer_public_key_hex) {
   let schema_ok = schema_valid_envelope(envelope) in
   let digest_ok = if schema_ok then envelope_digest_matches(envelope) else false in
-  let signature_ok = if digest_ok then envelope_signature_valid(envelope, issuer_secret) else false in
+  let signature_ok = if digest_ok then envelope_signature_valid(envelope, issuer_public_key_hex) else false in
   {
     accepted: schema_ok && digest_ok && signature_ok,
     schema_ok: schema_ok,

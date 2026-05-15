@@ -31,7 +31,7 @@ test "receiver accepts envelope only after recomputing digest and signature" {
   let a0 = node.new_node("issuer") in
   let b0 = node.new_node("receiver") in
   let pub = node.publish(a0, "test.space", "s", "p", "o", [], 103) in
-  let acc = node.accept_envelope(b0, pub.envelope, pub.node.node_secret) in
+  let acc = node.accept_envelope(b0, pub.envelope, pub.node.public_key_hex) in
   acc.report.accepted && acc.report.digest_ok && acc.report.signature_ok && node.has_claim(acc.node, pub.envelope.digest_hex)
 }
 
@@ -41,7 +41,7 @@ test "tampered envelope fails digest verification" {
   let pub = node.publish(a0, "test.space", "s", "p", "o", [], 104) in
   let bad_claim = { ...pub.envelope.claim, object: "changed" } in
   let bad_env = { ...pub.envelope, claim: bad_claim } in
-  let acc = node.accept_envelope(b0, bad_env, pub.node.node_secret) in
+  let acc = node.accept_envelope(b0, bad_env, pub.node.public_key_hex) in
   !acc.report.accepted && !acc.report.digest_ok
 }
 
@@ -49,14 +49,14 @@ test "structural witness signs verified digest" {
   let a0 = node.new_node("issuer-witness") in
   let b0 = node.new_node("witness-node") in
   let pub = node.publish(a0, "test.space", "s", "p", "o", [], 105) in
-  let wit = node.structurally_witness(b0, pub.envelope, pub.node.node_secret, 106) in
-  wit.accepted && wit.witness.validation_type == "structural" && witness.verify_witness(wit.witness, wit.node.node_secret)
+  let wit = node.structurally_witness(b0, pub.envelope, pub.node.public_key_hex, 106) in
+  wit.accepted && wit.witness.validation_type == "structural" && witness.verify_witness(wit.witness, wit.node.public_key_hex)
 }
 
 test "challenge object verifies under challenger secret" {
   let n0 = node.new_node("challenger") in
   let filed = node.file_challenge(n0, "sha256:abc", "InvalidSchema", "schema violation", 107) in
-  filed.challenge.kind == "InvalidSchema" && challenge.verify_challenge(filed.challenge, filed.node.node_secret)
+  filed.challenge.kind == "InvalidSchema" && challenge.verify_challenge(filed.challenge, filed.node.public_key_hex)
 }
 
 test "sync copies claim witness challenge state" {
@@ -64,7 +64,7 @@ test "sync copies claim witness challenge state" {
   let b0 = node.new_node("sync-b") in
   let c0 = node.new_node("sync-c") in
   let pub = node.publish(a0, "test.space", "s", "p", "o", [], 108) in
-  let wit = node.structurally_witness(b0, pub.envelope, pub.node.node_secret, 109) in
+  let wit = node.structurally_witness(b0, pub.envelope, pub.node.public_key_hex, 109) in
   let c1 = node.receive_witness(c0, wit.witness) in
   let filed = node.file_challenge(c1, pub.envelope.digest_hex, "MissingEvidenceRef", "none", 110) in
   let synced = node.sync_from(pub.node, filed.node) in
