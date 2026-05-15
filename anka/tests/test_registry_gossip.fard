@@ -66,5 +66,5 @@ test "known spaces in gossip matches registry" {
   let n = node.new_node("origin") in
   let g = origin.boot_with_default_spaces(n, 1000) in
   let gossip = rg.make_registry_gossip(g.registry, n.node_id, 1000) in
-  list.len(gossip.known_spaces) == 4
+  list.len(gossip.known_spaces) == 9
 }
