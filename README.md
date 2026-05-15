@@ -2,10 +2,10 @@
 
 **A verifiable claim substrate for autonomous AI systems.**
 
-Written in [FARD](https://github.com/mauludsadiq/FARD).
+Written in [Fard](https://github.com/mauludsadiq/FARD).
 
 ![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-2%2C701-blue)
+![Lines](https://img.shields.io/badge/lines-2%2C839-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Roadmap](https://img.shields.io/badge/roadmap-8%2F8%20phases-brightgreen)
 ![Status](https://img.shields.io/badge/status-active-success)
@@ -164,7 +164,9 @@ The origin node defines the genesis registry, publishes the first claim spaces, 
 
 ## Implementation
 
-112 tests. 2,096 lines of [FARD](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
+141 tests. 2,839 lines of [Fard](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
+
+**5-node live mesh verified.** Five separate processes, five separate SQLite databases, five separate node identities. One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness — without manual intervention. 5/5 nodes converge. 4/5 issue structural witnesses (the publisher does not witness its own claims). This is not a simulation — it is five fardrun processes communicating over HTTP.
 
 The stack, bottom to top:
 
