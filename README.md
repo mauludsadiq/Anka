@@ -88,7 +88,7 @@ These are not features. They are web primitives — the minimum set required for
 
 **Discovery registry.** The origin serves `GET /discovery` — a signed registry of institutional nodes. Any node registers via `POST /discovery/register` with a valid Ed25519-signed entry. Any joining node fetches the registry, verifies every entry against its declared public key, and bootstraps peer connections automatically.
 
-**Dashboard.** `GET /dashboard` on any node serves a live operator UI — claims, witnesses, digests, peers, registry spaces, and audit trail. No build chain, no npm, no separate process.
+**Observer dashboard.** `GET /dashboard` on any node serves a live operator UI — node topology, claim graph tagged by invariant/interpretive, audit feed with timestamped publish/witness/challenge events, peer health status, registry state, convergence tracker, and node identity. Corporate blue/white design. No build chain, no npm, no separate process. Auto-refreshes every 8 seconds.
 
 **Rate limiting.** Sliding window counters per endpoint. 429 on excess. Configurable per deployment.
 
