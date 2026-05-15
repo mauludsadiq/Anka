@@ -1,0 +1,99 @@
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/datetime") as dt
+import("sdk") as sdk
+
+// Publish any string output as a verifiable claim.
+// Returns { ok, digest_hex, cite_as } on success.
+// cite_as is the canonical citation string for this output.
+fn publish_output(client, claim_space, subject, predicate, output, evidence_refs) {
+  let timestamp = dt.now() in
+  let result = sdk.publish(client, claim_space, subject, predicate, output, evidence_refs, timestamp) in
+  if result.ok then
+    let digest = result.data.digest_hex in
+    {
+      ok: true,
+      digest_hex: digest,
+      cite_as: str.concat(["anka:", digest]),
+      claim_space: claim_space,
+      subject: subject,
+      predicate: predicate,
+      output: output,
+      timestamp_unix_secs: timestamp
+    }
+  else
+    { ok: false, reason: result.reason }
+}
+
+// Query a subject and return the collapsed answer only if it meets
+// the minimum witness threshold. If the threshold is not met, returns
+// ok: false with the current witness count so the caller can decide.
+fn verified_query(client, claim_space, subject, min_witnesses) {
+  let result = sdk.query(client, claim_space, subject) in
+  if !result.ok then
+    { ok: false, reason: result.reason }
+  else
+    let data = result.data in
+    let winner = data.single_winner in
+    let provenance = data.provenance in
+    let witness_count = list.len(list.filter(provenance, fn(p) { p.digest_hex == winner.winner_digest_hex })) in
+    let score = winner.winner_score in
+    if score < min_witnesses then
+      {
+        ok: false,
+        reason: "insufficient_witnesses",
+        current_score: score,
+        required: min_witnesses,
+        winner_digest_hex: winner.winner_digest_hex
+      }
+    else
+      {
+        ok: true,
+        answer: winner.winner_value,
+        digest_hex: winner.winner_digest_hex,
+        score: score,
+        cite_as: str.concat(["anka:", winner.winner_digest_hex]),
+        provenance: provenance
+      }
+}
+
+// Fetch a claim by digest and return it in citation format.
+// Any AI system that receives an anka: citation can call this
+// to verify the claim and get its full provenance.
+fn cite(client, digest) {
+  let result = sdk.fetch_claim(client, digest) in
+  if !result.ok then
+    { ok: false, reason: result.reason, digest_hex: digest }
+  else
+    let env = result.data.envelope in
+    let trail_result = sdk.audit_trail(client, digest) in
+    let trail = if trail_result.ok then trail_result.data.history else null in
+    {
+      ok: true,
+      digest_hex: digest,
+      cite_as: str.concat(["anka:", digest]),
+      claim_space: env.claim.claim_space,
+      subject: env.claim.subject,
+      predicate: env.claim.predicate,
+      value: env.claim.object,
+      issuer_node_id: env.claim.issuer_node_id,
+      evidence_refs: env.claim.evidence_refs,
+      timestamp_unix_secs: env.claim.timestamp_unix_secs,
+      witness_count: if trail != null then trail.witness_count else 0,
+      challenge_count: if trail != null then trail.challenge_count else 0,
+      reconstructable: if trail != null then trail.reconstructable else false
+    }
+}
+
+// Publish an LLM output and immediately return the citation handle.
+// This is the one-liner for agent developers.
+//
+// let result = agent.publish_llm_output(client, "brand.inventory", "SKU-123",
+//   "restock_recommendation", llm_response, ["inventory_db:v1"])
+// result.cite_as  =>  "anka:sha256:..."
+fn publish_llm_output(client, claim_space, subject, predicate, llm_output, evidence_refs) {
+  publish_output(client, claim_space, subject, predicate, llm_output, evidence_refs)
+}
+
+export { publish_output, verified_query, cite, publish_llm_output }

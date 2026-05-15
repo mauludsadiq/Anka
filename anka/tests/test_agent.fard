@@ -1,0 +1,45 @@
+import("../src/agent") as agent
+import("../src/sdk") as sdk
+import("std/str") as str
+import("std/rec") as rec
+
+test "publish_output returns digest and cite_as" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = agent.publish_output(c, "econ.space", "GDP_Q3", "forecast", "2.3", ["labor:v1"]) in
+  result.ok && str.starts_with(result.digest_hex, "sha256:") && str.starts_with(result.cite_as, "anka:sha256:")
+}
+
+test "publish_llm_output is alias for publish_output" {
+  let c = sdk.client("http://localhost:18080") in
+  let r1 = agent.publish_output(c, "econ.space", "GDP_Q3_2", "forecast", "2.4", ["labor:v2"]) in
+  let r2 = agent.publish_llm_output(c, "econ.space", "GDP_Q3_3", "forecast", "2.5", ["labor:v3"]) in
+  r1.ok && r2.ok && str.starts_with(r1.cite_as, "anka:") && str.starts_with(r2.cite_as, "anka:")
+}
+
+test "cite returns full provenance for published claim" {
+  let c = sdk.client("http://localhost:18080") in
+  let pub = agent.publish_output(c, "econ.space", "GDP_Q3_cite", "forecast", "2.6", ["labor:v3"]) in
+  let citation = agent.cite(c, pub.digest_hex) in
+  citation.ok && citation.value == "2.6" && citation.digest_hex == pub.digest_hex && str.starts_with(citation.cite_as, "anka:")
+}
+
+test "cite includes witness and challenge counts" {
+  let c = sdk.client("http://localhost:18080") in
+  let pub = agent.publish_output(c, "econ.space", "GDP_Q3_wc", "forecast", "2.7", ["labor:v4"]) in
+  let citation = agent.cite(c, pub.digest_hex) in
+  citation.ok && rec.has(citation, "witness_count") && rec.has(citation, "challenge_count")
+}
+
+test "verified_query fails when score below threshold" {
+  let c = sdk.client("http://localhost:18080") in
+  let _ = agent.publish_output(c, "econ.space", "GDP_threshold_test", "forecast", "2.1", []) in
+  let result = agent.verified_query(c, "econ.space", "GDP_threshold_test", 999) in
+  !result.ok && result.reason == "insufficient_witnesses"
+}
+
+test "verified_query returns answer when threshold met at zero" {
+  let c = sdk.client("http://localhost:18080") in
+  let _ = agent.publish_output(c, "econ.space", "GDP_zero_threshold", "forecast", "1.9", []) in
+  let result = agent.verified_query(c, "econ.space", "GDP_zero_threshold", 0) in
+  result.ok && result.answer == "1.9"
+}
