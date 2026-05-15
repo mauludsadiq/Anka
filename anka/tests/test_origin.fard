@@ -56,15 +56,37 @@ test "verify genesis rejects wrong issuer" {
   !report.valid && !report.issuer_ok
 }
 
-test "boot with default spaces registers four spaces" {
+test "boot with default spaces registers nine spaces" {
   let n = node.new_node("origin-node") in
   let g = origin.boot_with_default_spaces(n, 1000) in
   let spaces = reg.known_spaces(g.registry) in
-  list.len(spaces) == 4
+  list.len(spaces) == 9
 }
 
 test "default spaces include invariant and interpretive" {
   let n = node.new_node("origin-node") in
   let g = origin.boot_with_default_spaces(n, 1000) in
   reg.has_space(g.registry, "anka.invariant.crypto") && reg.has_space(g.registry, "anka.interpretive.econ")
+}
+
+test "default spaces include research reproducibility spaces" {
+  let n = node.new_node("origin-node") in
+  let g = origin.boot_with_default_spaces(n, 1000) in
+  reg.has_space(g.registry, "fard.execution.receipts") &&
+  reg.has_space(g.registry, "dataset.provenance") &&
+  reg.has_space(g.registry, "model.training.trace") &&
+  reg.has_space(g.registry, "research.result.claims") &&
+  reg.has_space(g.registry, "reproducibility.results")
+}
+
+test "research result claims are interpretive plural" {
+  let spaces = origin.default_claim_spaces() in
+  let found = list.find(spaces, fn(s) { s.name == "research.result.claims" }) in
+  found.some.category == "interpretive" && found.some.convergence_policy == "plural"
+}
+
+test "reproducibility results are invariant single winner" {
+  let spaces = origin.default_claim_spaces() in
+  let found = list.find(spaces, fn(s) { s.name == "reproducibility.results" }) in
+  found.some.category == "invariant" && found.some.convergence_policy == "single-winner"
 }

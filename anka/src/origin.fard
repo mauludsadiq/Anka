@@ -60,7 +60,12 @@ fn default_claim_spaces() {
     space.make_claim_space("anka.invariant.crypto", "invariant", "single-winner", "Cryptographic proofs and attestations"),
     space.make_claim_space("anka.invariant.compute", "invariant", "single-winner", "Deterministic computation results"),
     space.make_claim_space("anka.interpretive.econ", "interpretive", "plural", "Economic forecasts and models"),
-    space.make_claim_space("anka.interpretive.science", "interpretive", "plural", "Scientific findings and forecasts")
+    space.make_claim_space("anka.interpretive.science", "interpretive", "plural", "Scientific findings and forecasts"),
+    space.make_claim_space("fard.execution.receipts", "invariant", "single-winner", "FARD execution receipts and deterministic replay artifacts"),
+    space.make_claim_space("dataset.provenance", "invariant", "single-winner", "Dataset identity, source lineage, and content-addressed provenance"),
+    space.make_claim_space("model.training.trace", "invariant", "single-winner", "Model training traces, checkpoints, optimizer events, and run receipts"),
+    space.make_claim_space("research.result.claims", "interpretive", "plural", "Research result claims, reported findings, metrics, and interpretations"),
+    space.make_claim_space("reproducibility.results", "invariant", "single-winner", "Independent reproduction attempts and deterministic verification outcomes")
   ]
 }
 
