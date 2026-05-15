@@ -7,6 +7,7 @@ import("std/sqlite") as sqlite
 import("node") as node
 import("node_server") as server
 import("registry") as reg
+import("archive") as arch
 
 let port = 18080
 let node_name = "anka-node"
@@ -21,8 +22,7 @@ let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state
 let initial_state = if list.len(existing) > 0 then
   json.decode(existing[0].value)
 else
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(boot_node), "')"]))
-  in boot_node
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(boot_node), "')"])) in boot_node
 
 let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'")
 let initial_peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else []
@@ -34,6 +34,9 @@ let initial_registry = if list.len(registry_rows) > 0 then json.decode(registry_
 let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'")
 let initial_subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else []
 
+let archive_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'")
+let initial_archive = if list.len(archive_rows) > 0 then json.decode(archive_rows[0].value) else arch.archive_empty()
+
 let _ = net.serve(port, fn(req) {
   let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'") in
   let state = json.decode(rows[0].value) in
@@ -43,10 +46,13 @@ let _ = net.serve(port, fn(req) {
   let registry = if list.len(reg_rows) > 0 then json.decode(reg_rows[0].value) else empty_registry in
   let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'") in
   let subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else [] in
-  let result = server.handle(state, peers, local_address, registry, subscriptions, req) in
+  let arc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'") in
+  let arc = if list.len(arc_rows) > 0 then json.decode(arc_rows[0].value) else arch.archive_empty() in
+  let result = server.handle(state, peers, local_address, registry, subscriptions, arc, req) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", json.encode(result.next_registry), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", json.encode(result.next_subscriptions), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", json.encode(result.next_archive), "')"])) in
   result.response
 })
