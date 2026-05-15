@@ -166,7 +166,7 @@ git clone https://github.com/mauludsadiq/Anka && cd Anka
 docker-compose up
 ```
 
-Starts origin, two mesh nodes, and a policy node. No Fard runtime required.
+Starts origin, Alice node, Bob node, and policy node. Runs the full Alice/Bob reproducibility demo automatically once nodes are healthy. No Fard runtime required. Persistent SQLite volumes survive restarts.
 
 **Option 2: Local (requires [Fard](https://github.com/mauludsadiq/FARD) runtime)**
 
