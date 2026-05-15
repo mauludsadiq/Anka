@@ -14,10 +14,12 @@ import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
 import("rate_limit") as rl
+import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
 import("claim_set") as cset
 import("rate_limit") as rl
+import("dashboard") as dashboard
 import("std/datetime") as dt
 
 fn json_response(state, peers, local_address, registry, subscriptions, arc, data) {
@@ -135,6 +137,8 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     json_response(state, next_peers, local_address, registry, subscriptions, arc, { ok: true, peer_count: list.len(next_peers), address: body.address })
   else if req.path == "/peers" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, peers: peers })
+  else if req.path == "/dashboard" && req.method == "GET" then
+    { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: dashboard.html(), content_type: "text/html" } }
   else if str.starts_with(req.path, "/query/") && req.method == "GET" then
     let parts = str.split(req.path, "/") in
     let claim_space = list.get(parts, 2) in
