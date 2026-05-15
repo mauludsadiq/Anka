@@ -11,6 +11,10 @@ import("fetch_pipeline") as pipeline
 import("registry_gossip") as rg
 import("scoped_gossip") as sg
 import("archive") as arch
+import("weighted_collapse") as wc
+import("claim_set") as cset
+import("weighted_collapse") as wc
+import("claim_set") as cset
 
 fn json_response(state, peers, local_address, registry, subscriptions, arc, data) {
   { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
@@ -112,6 +116,86 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     json_response(state, next_peers, local_address, registry, subscriptions, arc, { ok: true, peer_count: list.len(next_peers), address: body.address })
   else if req.path == "/peers" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, peers: peers })
+  else if str.starts_with(req.path, "/query/") && req.method == "GET" then
+    let parts = str.split(req.path, "/") in
+    let claim_space = list.get(parts, 2) in
+    let subject = list.get(parts, 3) in
+    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
+    let matching = list.filter(all_envelopes, fn(env) {
+      env.claim.claim_space == claim_space && env.claim.subject == subject
+    }) in
+    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let rep_state = rec.getOr(state, "reputation", {}) in
+    let cs = cset.assemble(claim_space, subject, matching, []) in
+    let collapse_result = wc.collapse(cs, all_witnesses, rep_state, "single-winner") in
+    let plural_result = wc.collapse(cs, all_witnesses, rep_state, "plural") in
+    let winner_envelope = if collapse_result.winner_digest_hex != null then
+      rec.get(state.claims, collapse_result.winner_digest_hex)
+    else null in
+    json_response(state, peers, local_address, registry, subscriptions, arc, {
+      ok: true,
+      claim_space: claim_space,
+      subject: subject,
+      claim_count: list.len(matching),
+      single_winner: {
+        winner_digest_hex: collapse_result.winner_digest_hex,
+        winner_score: collapse_result.winner_score,
+        winner_value: if winner_envelope != null then winner_envelope.claim.object else null
+      },
+      plural: {
+        retained_digests: plural_result.retained_digests,
+        scores: plural_result.scores
+      },
+      provenance: list.map(matching, fn(env) {
+        {
+          digest_hex: env.digest_hex,
+          issuer_node_id: env.claim.issuer_node_id,
+          value: env.claim.object,
+          evidence_refs: env.claim.evidence_refs,
+          timestamp_unix_secs: env.claim.timestamp_unix_secs
+        }
+      })
+    })
+  else if str.starts_with(req.path, "/query/") && req.method == "GET" then
+    let parts = str.split(req.path, "/") in
+    let claim_space = list.get(parts, 2) in
+    let subject = list.get(parts, 3) in
+    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
+    let matching = list.filter(all_envelopes, fn(env) {
+      env.claim.claim_space == claim_space && env.claim.subject == subject
+    }) in
+    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let rep_state = rec.getOr(state, "reputation", {}) in
+    let cs = cset.assemble(claim_space, subject, matching, []) in
+    let collapse_result = wc.collapse(cs, all_witnesses, rep_state, "single-winner") in
+    let plural_result = wc.collapse(cs, all_witnesses, rep_state, "plural") in
+    let winner_envelope = if collapse_result.winner_digest_hex != null then
+      rec.get(state.claims, collapse_result.winner_digest_hex)
+    else null in
+    json_response(state, peers, local_address, registry, subscriptions, arc, {
+      ok: true,
+      claim_space: claim_space,
+      subject: subject,
+      claim_count: list.len(matching),
+      single_winner: {
+        winner_digest_hex: collapse_result.winner_digest_hex,
+        winner_score: collapse_result.winner_score,
+        winner_value: if winner_envelope != null then winner_envelope.claim.object else null
+      },
+      plural: {
+        retained_digests: plural_result.retained_digests,
+        scores: plural_result.scores
+      },
+      provenance: list.map(matching, fn(env) {
+        {
+          digest_hex: env.digest_hex,
+          issuer_node_id: env.claim.issuer_node_id,
+          value: env.claim.object,
+          evidence_refs: env.claim.evidence_refs,
+          timestamp_unix_secs: env.claim.timestamp_unix_secs
+        }
+      })
+    })
   else
     error_response(state, peers, local_address, registry, subscriptions, arc, 404, "unknown route")
 }
