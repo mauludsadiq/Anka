@@ -1,6 +1,6 @@
-FROM debian:bookworm-slim
+FROM --platform=linux/amd64 debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y curl ca-certificates sqlite3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl ca-certificates sqlite3 python3 && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://github.com/mauludsadiq/FARD/releases/download/v1.6.1/fardrun-linux-x86_64     -o /usr/local/bin/fardrun && chmod +x /usr/local/bin/fardrun
 

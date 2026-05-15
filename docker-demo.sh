@@ -11,14 +11,18 @@ echo "Alice: $ALICE"
 echo "Bob:   $BOB"
 echo ""
 
+post() {
+  curl -s -X POST "$1" -H "Content-Type: application/json" --data "$2"
+}
+
 echo "=> Bootstrapping registries from origin..."
-curl -s -X POST $ALICE/registry/fetch   -H "Content-Type: application/json"   --data "{"sender_address":"$ORIGIN"}" > /dev/null
-curl -s -X POST $BOB/registry/fetch   -H "Content-Type: application/json"   --data "{"sender_address":"$ORIGIN"}" > /dev/null
+post "$ALICE/registry/fetch" '{"sender_address":"'"$ORIGIN"'"}' > /dev/null
+post "$BOB/registry/fetch"   '{"sender_address":"'"$ORIGIN"'"}' > /dev/null
 
 echo "=> Connecting Alice and Bob as peers..."
-curl -s -X POST $ALICE/peer   -H "Content-Type: application/json"   --data "{"address":"$BOB"}" > /dev/null
-curl -s -X POST $BOB/peer   -H "Content-Type: application/json"   --data "{"address":"$ALICE"}" > /dev/null
-echo "✓ Mesh established"
+post "$ALICE/peer" '{"address":"'"$BOB"'"}' > /dev/null
+post "$BOB/peer"   '{"address":"'"$ALICE"'"}' > /dev/null
+echo "Mesh established"
 echo ""
 
 echo "=> Alice publishes her research finding..."
@@ -26,9 +30,11 @@ echo "   Claim space: research.result.claims"
 echo "   Subject:     climate-sensitivity-2026"
 echo "   Finding:     3.2C per doubling of CO2"
 
-ALICE_DIGEST=$(curl -s -X POST $ALICE/publish   -H "Content-Type: application/json"   --data '"'"'{"claim_space":"research.result.claims","subject":"climate-sensitivity-2026","predicate":"reported_finding","object":"3.2C per doubling of CO2","evidence_refs":["ipcc_ar7:draft","model:claude-sonnet-4"],"timestamp_unix_secs":1775710900}'"'"'   | python3 -c "import sys,json; print(json.load(sys.stdin)['"'"'digest_hex'"'"'])")
+ALICE_DIGEST=$(post "$ALICE/publish" \
+  '{"claim_space":"research.result.claims","subject":"climate-sensitivity-2026","predicate":"reported_finding","object":"3.2C per doubling of CO2","evidence_refs":["ipcc_ar7:draft","model:claude-sonnet-4"],"timestamp_unix_secs":1775710900}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['digest_hex'])")
 
-echo "✓ Alice published: $ALICE_DIGEST"
+echo "Alice published: $ALICE_DIGEST"
 echo ""
 
 sleep 3
@@ -36,18 +42,25 @@ sleep 3
 echo "=> Bob independently replicates Alice's finding..."
 echo "   Publishing to: reproducibility.results"
 
-BOB_DIGEST=$(curl -s -X POST $BOB/publish   -H "Content-Type: application/json"   --data "{"claim_space":"reproducibility.results","subject":"climate-sensitivity-2026","predicate":"independently_replicated","object":"confirmed:3.2C per doubling of CO2","evidence_refs":["bob_model:v2","ipcc_ar7:draft"],"timestamp_unix_secs":1775710960}"   | python3 -c "import sys,json; print(json.load(sys.stdin)['"'"'digest_hex'"'"'])")
+BOB_DIGEST=$(post "$BOB/publish" \
+  '{"claim_space":"reproducibility.results","subject":"climate-sensitivity-2026","predicate":"independently_replicated","object":"confirmed:3.2C per doubling of CO2","evidence_refs":["bob_model:v2","ipcc_ar7:draft"],"timestamp_unix_secs":1775710960}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['digest_hex'])")
 
-echo "✓ Bob published replication: $BOB_DIGEST"
+echo "Bob published replication: $BOB_DIGEST"
 echo ""
 
-sleep 4
+echo "=> Bob fetching Alice's claim directly..."
+curl -s -X POST "$BOB/fetch"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","sender_address":"'"$ALICE"'","timestamp_unix_secs":1775710910}' > /dev/null
+echo "   Fetch triggered"
 
-echo "=> Querying the mesh for Alice's finding (from Bob's node)..."
+sleep 5
+
+echo "=> Querying the mesh (from Bob's node)..."
+
 RESULT=$(curl -s "$BOB/query/research.result.claims/climate-sensitivity-2026")
-WINNER=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_value'"'"'])")
-SCORE=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_score'"'"'])")
-CITE="anka:$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_digest_hex'"'"'])")"
+WINNER=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_value'])")
+SCORE=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_score'])")
+CITE=$(echo "$RESULT"   | python3 -c "import sys,json; d=json.load(sys.stdin); w=d['single_winner']['winner_digest_hex']; print('anka:'+w) if w else print('pending')")
 
 echo ""
 echo "  Finding:  $WINNER"
@@ -55,20 +68,17 @@ echo "  Score:    $SCORE witnesses"
 echo "  Cite as:  $CITE"
 echo ""
 
-echo "=> Querying Bob's replication result..."
 REPRO=$(curl -s "$BOB/query/reproducibility.results/climate-sensitivity-2026")
-REPRO_VAL=$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_value'"'"'])" 2>/dev/null || echo "pending")
-REPRO_CITE="anka:$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'single_winner'"'"']['"'"'winner_digest_hex'"'"'])" 2>/dev/null || echo "pending")"
+REPRO_VAL=$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_value'])" 2>/dev/null || echo "pending")
+REPRO_CITE=$(echo "$REPRO" | python3 -c "import sys,json; d=json.load(sys.stdin); print('anka:'+d['single_winner']['winner_digest_hex'])" 2>/dev/null || echo "pending")
 
-echo ""
 echo "  Replication: $REPRO_VAL"
 echo "  Cite as:     $REPRO_CITE"
 echo ""
 
-echo "=> Fetching audit trail for Alice's claim (from Bob's node)..."
-TRAIL=$(curl -s "$BOB/audit/trail/${ALICE_DIGEST}")
-PUB=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'history'"'"']['"'"'published_count'"'"'])")
-WIT=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['"'"'history'"'"']['"'"'witness_count'"'"'])")
+TRAIL=$(curl -s "$BOB/audit/trail/$ALICE_DIGEST")
+PUB=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['history']['published_count'])")
+WIT=$(echo "$TRAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['history']['witness_count'])")
 
 echo "  Published: $PUB event(s)"
 echo "  Witnessed: $WIT event(s)"
