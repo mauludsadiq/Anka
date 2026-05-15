@@ -198,6 +198,56 @@ Each layer enforces its own invariant. No layer trusts the one below blindly.
 
 -----
 
+## Node API
+
+Every live node exposes the following HTTP endpoints.
+
+**Claims**
+
+```
+POST /publish                          Publish a signed claim to the mesh
+GET  /claim/{digest}                   Fetch a specific claim envelope by digest
+GET  /query/{claim_space}/{subject}    Policy-collapsed answer with full provenance
+POST /gossip                           Receive a gossip digest from a peer
+POST /fetch                            Fetch, verify, and witness a claim by digest
+```
+
+**Witnessing and Challenges**
+
+```
+POST /witness                          Record a received witness attestation
+POST /challenge                        Record a received challenge
+```
+
+**Peers and Subscriptions**
+
+```
+POST /peer                             Register a peer address
+GET  /peers                            List known peers
+POST /subscribe                        Set subscription spaces (replaces current list)
+GET  /subscriptions                    List current subscriptions
+```
+
+**Registry**
+
+```
+GET  /registry                         Fetch the local registry snapshot
+POST /registry/fetch                   Fetch and apply registry from a peer
+POST /registry/gossip                  Receive a registry gossip notification
+```
+
+**Audit and State**
+
+```
+GET  /audit                            Archive summary (snapshot count, receipt count)
+GET  /audit/trail/{digest}             Full epistemic trail for a claim digest
+GET  /sync                             Node state summary (claim, witness, challenge counts)
+GET  /known                            List of all known digests
+GET  /health                           Node health and identity
+```
+
+-----
+
 ## Running
 
 ```bash
@@ -216,11 +266,30 @@ fardrun test --program anka/tests/test_anka_layer1.fard
 
 -----
 
+## What ANKA Is For
+
+ANKA is a substrate where divergent intelligent agents can coordinate without pretending to a unitary reality, while converging where it matters.
+
+The internet assumes a human at the end of every chain — someone who reads, judges, and takes responsibility. AI systems cannot operate on that assumption. They need a network where:
+
+- **Provenance is intrinsic.** Not metadata attached elsewhere. Not a trusted intermediary vouching. The claim carries its own origin, evidence, and verification history.
+- **Disagreement is preserved faithfully.** When two research groups produce conflicting findings, both survive in the mesh — with their full evidence and witness histories — until a consuming agent applies its own declared policy to decide what to act on.
+- **Verification is computable.** A validator node doesn’t read a claim and trust it. It fetches the evidence references, re-runs the computation, and independently confirms the result. A mismatch produces a signed challenge that any other node can verify.
+- **Coordination happens without consensus.** Interpretive domains — science, economics, law, medicine — don’t converge to a single truth. ANKA doesn’t pretend they do. It preserves the divergence and makes the structure of disagreement legible.
+
+The intended deployment contexts are institutions where AI systems generate high-stakes claims: research universities, hospitals, financial institutions, legal systems. A claim about a drug interaction, an economic forecast, a legal interpretation, a code verification result. Any of these needs provenance, witness history, and contestation records that survive the lifecycle of the claim — not just the session that produced it.
+
+The substrate is complete. What comes next is the application layer.
+
 ## What Comes Next
 
-The substrate is complete. The next layer is the application: an agent mesh where AI systems publish claims with execution traces, validator nodes recompute and attest, archive nodes preserve the full epistemic trail, and policy nodes collapse under declared rules.
+**AI audit trail adapter.** A wrapper that intercepts an LLM’s generation, packages the prompt, inference parameters, and output as an `ExecClaim`, submits it to ANKA, and returns the claim digest alongside the response. Any downstream system can verify the claim’s provenance and check its witness history before acting on it.
 
-The natural first application is an audit trail for AI-generated claims — a network where the provenance, verification history, and contestation record of any AI output is intrinsic to the output itself, not stored separately, not dependent on a trusted intermediary, and not losable.
+**Verifiable RAG.** An agent that refuses to cite a source unless its claim digest has at least three structural witnesses and no open challenges younger than the network’s convergence time. The citation carries a digest, not a URL. The reader can independently verify.
+
+**Multi-institutional mesh.** Separate machines, separate operators, separate claim spaces. A node at Oxford and a node at MIT exchange claims over HTTPS, verify each other’s signatures without shared secrets, and produce policy-collapsed answers under each institution’s declared rules. No central coordinator.
+
+**Economic security layer.** In a permissioned institutional mesh, reputation and identity declarations provide sufficient Sybil resistance. For open participation, a staking and slashing layer — publish stakes, witness stakes, challenge stakes — makes bad behavior costly without requiring trust.
 
 # License
 
