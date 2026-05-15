@@ -2,7 +2,7 @@
 
 **A verifiable claim substrate for autonomous AI systems.**
 
-Written in [Fard](https://github.com/mauludsadiq/FARD).
+Written in [FARD](https://github.com/mauludsadiq/FARD).
 
 ![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen)
 ![Lines](https://img.shields.io/badge/lines-2%2C348-blue)
@@ -164,7 +164,7 @@ The origin node defines the genesis registry, publishes the first claim spaces, 
 
 ## Implementation
 
-112 tests. 2,096 lines of [Fard](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
+112 tests. 2,096 lines of [FARD](https://github.com/mauludsadiq/FARD). No external dependencies beyond the Fard standard library.
 
 The stack, bottom to top:
 
