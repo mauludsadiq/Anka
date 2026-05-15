@@ -1,0 +1,78 @@
+import("../src/policy_node") as policy
+import("../src/node") as node
+import("../src/reputation") as rep
+import("../src/witness") as witness
+import("std/list") as list
+import("std/str") as str
+
+test "collapse result digest is stable" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let b = node.new_node("agent-b") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let pub_b = node.publish(b, "econ.space", "GDP", "forecast", "1.8", [], 101) in
+  let envelopes = [pub_a.envelope, pub_b.envelope] in
+  let witnesses = [] in
+  let rep_state = rep.empty() in
+  let result = policy.apply_policy("econ.space", "GDP", envelopes, witnesses, rep_state, n.node_id, "plural", 102) in
+  let d1 = policy.digest_collapse_result(result) in
+  let d2 = policy.digest_collapse_result(result) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}
+
+test "collapse result signs and verifies" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope], [], rep.empty(), n.node_id, "plural", 101) in
+  let envelope = policy.sign_collapse_result(result, n.node_secret) in
+  let report = policy.verify_collapse_result(envelope, n.node_secret) in
+  report.valid && report.digest_ok && report.signature_ok
+}
+
+test "tampered collapse result fails verification" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope], [], rep.empty(), n.node_id, "plural", 101) in
+  let envelope = policy.sign_collapse_result(result, n.node_secret) in
+  let bad_result = { ...envelope.result, winner_digest_hex: "sha256:tampered" } in
+  let bad_envelope = { ...envelope, result: bad_result } in
+  let report = policy.verify_collapse_result(bad_envelope, n.node_secret) in
+  !report.valid && !report.digest_ok
+}
+
+test "plural collapse retains all digests" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let b = node.new_node("agent-b") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let pub_b = node.publish(b, "econ.space", "GDP", "forecast", "1.8", [], 101) in
+  let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope, pub_b.envelope], [], rep.empty(), n.node_id, "plural", 102) in
+  result.plural && list.len(result.retained_digests) == 2
+}
+
+test "single winner collapse chooses highest weight" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let b = node.new_node("agent-b") in
+  let w = node.new_node("witness-w") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let pub_b = node.publish(b, "econ.space", "GDP", "forecast", "1.8", [], 101) in
+  let wit_a = witness.make_witness(pub_a.envelope.digest_hex, w.node_id, "structural", 102, w.node_secret) in
+  let wit_a2 = witness.make_witness(pub_a.envelope.digest_hex, w.node_id, "structural", 103, w.node_secret) in
+  let rep_state = rep.record_pass(rep.record_pass(rep.empty(), w.node_id, "econ.space"), w.node_id, "econ.space") in
+  let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope, pub_b.envelope], [wit_a, wit_a2], rep_state, n.node_id, "single-winner", 104) in
+  !result.plural && result.winner_digest_hex == pub_a.envelope.digest_hex
+}
+
+test "policy store stores and retrieves results" {
+  let n = node.new_node("policy-node") in
+  let a = node.new_node("agent-a") in
+  let pub_a = node.publish(a, "econ.space", "GDP", "forecast", "2.3", [], 100) in
+  let result = policy.apply_policy("econ.space", "GDP", [pub_a.envelope], [], rep.empty(), n.node_id, "plural", 101) in
+  let envelope = policy.sign_collapse_result(result, n.node_secret) in
+  let store = policy.empty_policy_store() in
+  let store2 = policy.store_result(store, envelope) in
+  list.len(policy.list_results(store2)) == 1
+}

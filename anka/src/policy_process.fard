@@ -1,0 +1,83 @@
+import("std/net") as net
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/sqlite") as sqlite
+import("node") as node
+import("policy_node") as policy
+import("reputation") as rep
+
+let port = 18082
+let node_name = "anka-policy"
+let local_address = "http://localhost:18082"
+let db_path = "file:out/policy/anka_policy.db?cache=shared&mode=rwc"
+
+let db = sqlite.open(db_path)
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+
+let boot_node = node.new_node(node_name)
+let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'policy_node'")
+let policy_node = if list.len(existing) > 0 then
+  json.decode(existing[0].value)
+else
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('policy_node', '", json.encode(boot_node), "')"]))
+  in boot_node
+
+let store_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'policy_store'")
+let initial_store = if list.len(store_rows) > 0 then
+  json.decode(store_rows[0].value)
+else
+  policy.empty_policy_store()
+
+let rep_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'reputation'")
+let initial_rep = if list.len(rep_rows) > 0 then
+  json.decode(rep_rows[0].value)
+else
+  rep.empty()
+
+fn save_store(db, store) {
+  sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('policy_store', '", json.encode(store), "')"])) 
+}
+
+fn save_rep(db, rep_state) {
+  sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('reputation', '", json.encode(rep_state), "')"])) 
+}
+
+let _ = net.serve(port, fn(req) {
+  let store_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'policy_store'") in
+  let store = if list.len(store_rows) > 0 then json.decode(store_rows[0].value) else policy.empty_policy_store() in
+  let rep_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'reputation'") in
+  let rep_state = if list.len(rep_rows) > 0 then json.decode(rep_rows[0].value) else rep.empty() in
+  if req.path == "/health" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, node_id: policy_node.node_id, kind: "policy" }), content_type: "application/json" }
+  else if req.path == "/collapse" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let result = policy.apply_policy(body.claim_space, body.subject, body.envelopes, body.witnesses, rep_state, policy_node.node_id, body.mode, body.timestamp_unix_secs) in
+    let envelope = policy.sign_collapse_result(result, policy_node.node_secret) in
+    let next_store = policy.store_result(store, envelope) in
+    let _ = save_store(db, next_store) in
+    { status: 200, body: json.encode({ ok: true, digest_hex: envelope.digest_hex, result: result }), content_type: "application/json" }
+  else if str.starts_with(req.path, "/collapse/") && req.method == "GET" then
+    let digest = str.slice(req.path, 10, str.len(req.path)) in
+    let entry = policy.get_result(store, digest) in
+    if entry != null then
+      { status: 200, body: json.encode({ ok: true, envelope: entry }), content_type: "application/json" }
+    else
+      { status: 404, body: json.encode({ ok: false, reason: "collapse result not found" }), content_type: "application/json" }
+  else if req.path == "/collapses" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, digests: policy.list_results(store) }), content_type: "application/json" }
+  else if req.path == "/reputation" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next_rep = if body.outcome == "pass" then
+      rep.record_pass(rep_state, body.node_id, body.claim_space)
+    else
+      rep.record_failure(rep_state, body.node_id, body.claim_space)
+    in
+    let _ = save_rep(db, next_rep) in
+    { status: 200, body: json.encode({ ok: true, score: rep.get_score(next_rep, body.node_id, body.claim_space) }), content_type: "application/json" }
+  else if req.path == "/reputation" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, reputation: rep_state }), content_type: "application/json" }
+  else
+    { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), content_type: "application/json" }
+})

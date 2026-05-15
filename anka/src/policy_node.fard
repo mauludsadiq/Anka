@@ -1,0 +1,74 @@
+import("std/json") as json
+import("std/rec") as rec
+import("std/list") as list
+import("canonical") as canon
+import("weighted_collapse") as wc
+import("reputation") as rep
+import("claim_set") as cset
+
+fn make_collapse_result(claim_space, subject, policy_node_id, mode, collapse_output, timestamp_unix_secs) {
+  {
+    claim_space: claim_space,
+    subject: subject,
+    policy_node_id: policy_node_id,
+    mode: mode,
+    scores: collapse_output.scores,
+    winner_digest_hex: collapse_output.winner_digest_hex,
+    retained_digests: collapse_output.retained_digests,
+    plural: collapse_output.plural,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn digest_collapse_result(result) {
+  canon.digest_text(json.canonicalize({
+    claim_space: result.claim_space,
+    subject: result.subject,
+    policy_node_id: result.policy_node_id,
+    mode: result.mode,
+    winner_digest_hex: result.winner_digest_hex,
+    retained_digests: result.retained_digests,
+    timestamp_unix_secs: result.timestamp_unix_secs
+  }))
+}
+
+fn sign_collapse_result(result, policy_node_secret) {
+  let digest_hex = digest_collapse_result(result) in
+  let sig = canon.structural_signature(policy_node_secret, digest_hex) in
+  {
+    result: result,
+    digest_hex: digest_hex,
+    signature_hex: sig,
+    kind: "collapse_result"
+  }
+}
+
+fn verify_collapse_result(envelope, policy_node_secret) {
+  let digest_ok = digest_collapse_result(envelope.result) == envelope.digest_hex in
+  let sig_ok = if digest_ok then canon.verify_structural_signature(policy_node_secret, envelope.digest_hex, envelope.signature_hex) else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn apply_policy(claim_space, subject, envelopes, witnesses, rep_state, policy_node_id, mode, timestamp_unix_secs) {
+  let cs = cset.assemble(claim_space, subject, envelopes, []) in
+  let collapse_output = wc.collapse(cs, witnesses, rep_state, mode) in
+  make_collapse_result(claim_space, subject, policy_node_id, mode, collapse_output, timestamp_unix_secs)
+}
+
+fn empty_policy_store() {
+  { results: {} }
+}
+
+fn store_result(policy_store, envelope) {
+  { results: rec.set(policy_store.results, envelope.digest_hex, envelope) }
+}
+
+fn get_result(policy_store, digest_hex) {
+  rec.get(policy_store.results, digest_hex)
+}
+
+fn list_results(policy_store) {
+  rec.keys(policy_store.results)
+}
+
+export { make_collapse_result, digest_collapse_result, sign_collapse_result, verify_collapse_result, apply_policy, empty_policy_store, store_result, get_result, list_results }
