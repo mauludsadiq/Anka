@@ -130,7 +130,16 @@ A Resolution object type was considered and rejected. Collapse happens at the po
 
 ## Quickstart
 
-**Requirements:** [Fard](https://github.com/mauludsadiq/FARD) runtime.
+**Option 1: Docker (recommended)**
+
+```bash
+git clone https://github.com/mauludsadiq/Anka && cd Anka
+docker-compose up
+```
+
+Starts origin, two mesh nodes, and a policy node. No Fard runtime required.
+
+**Option 2: Local (requires [Fard](https://github.com/mauludsadiq/FARD) runtime)**
 
 ```bash
 git clone https://github.com/mauludsadiq/Anka && cd Anka
@@ -243,8 +252,6 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 ## What Is Not Built Yet
 
 The substrate is complete. The application layer is not.
-
-**Docker image.** Running ANKA requires the Fard runtime. A `docker run anka/node` that starts a fully configured node with no other dependencies is the next infrastructure piece.
 
 **Discovery registry.** Nodes find each other by address. There is no mechanism for an Oxford node to discover a MIT node without prior out-of-band coordination. A signed registry of institutional nodes — even a static JSON file at a well-known URL — closes this gap.
 
