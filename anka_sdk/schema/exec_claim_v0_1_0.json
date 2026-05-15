@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anka.network/schema/exec_claim_v0_1_0.json",
+  "title": "ANKA ExecClaim v0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "claim_space",
+    "subject",
+    "expression",
+    "inputs",
+    "output",
+    "runtime"
+  ],
+  "properties": {
+    "kind": { "const": "exec_claim" },
+    "schema_version": { "const": "0.1.0" },
+    "claim_space": { "type": "string", "minLength": 1 },
+    "subject": { "type": "string", "minLength": 1 },
+    "expression": {
+      "oneOf": [
+        { "$ref": "#/$defs/inline_expr" },
+        { "$ref": "#/$defs/source_ref" },
+        { "$ref": "#/$defs/fard_program" }
+      ]
+    },
+    "inputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/input" }
+    },
+    "output": { "$ref": "#/$defs/output" },
+    "runtime": { "$ref": "#/$defs/runtime" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "digest", "media_type"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "media_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "media_type", "value"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "value": {}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "dependencies_digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "dependencies_digest": {
+          "anyOf": [
+            { "$ref": "#/$defs/digest" },
+            { "const": "sha256:unspecified" }
+          ]
+        }
+      }
+    },
+    "inline_expr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "language", "code", "source_digest"],
+      "properties": {
+        "kind": { "const": "inline_expr" },
+        "language": { "type": "string", "minLength": 1 },
+        "code": { "type": "string" },
+        "source_digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "language", "entrypoint", "source_digest"],
+      "properties": {
+        "kind": { "const": "source_ref" },
+        "language": { "type": "string", "minLength": 1 },
+        "entrypoint": { "type": "string", "minLength": 1 },
+        "source_digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "fard_program": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "language", "entrypoint", "program_digest"],
+      "properties": {
+        "kind": { "const": "fard_program" },
+        "language": { "const": "fard" },
+        "entrypoint": { "type": "string", "minLength": 1 },
+        "program_digest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}
