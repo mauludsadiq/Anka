@@ -1,0 +1,68 @@
+import("../src/identity") as id
+import("../src/node") as node
+import("../src/keypair") as kp
+import("std/str") as str
+
+test "identity declaration signs and verifies" {
+  let n = node.new_node("oxford-econ-dept") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ-node@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n.node_secret) in
+  let report = id.verify_identity_declaration(env) in
+  report.valid && report.institution == "University of Oxford" && report.role == "validator"
+}
+
+test "tampered institution fails verification" {
+  let n = node.new_node("oxford-econ-dept") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ-node@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n.node_secret) in
+  let bad_decl = { ...env.declaration, institution: "University of Cambridge" } in
+  let bad_env = { ...env, declaration: bad_decl } in
+  let report = id.verify_identity_declaration(bad_env) in
+  !report.valid && !report.digest_ok
+}
+
+test "node id must match public key" {
+  let n = node.new_node("oxford-econ-dept") in
+  let n2 = node.new_node("cambridge-econ-dept") in
+  let decl = id.make_identity_declaration(n.node_id, n2.public_key_hex, "University of Oxford", "Economics", "validator", "econ@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n2.node_secret) in
+  let report = id.verify_identity_declaration(env) in
+  !report.valid && !report.key_matches
+}
+
+test "origin countersigns and verification passes" {
+  let n = node.new_node("oxford-econ-dept") in
+  let origin = node.new_node("anka-origin") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n.node_secret) in
+  let countersigned = id.countersign_identity(env, origin.node_secret, origin.node_id) in
+  let report = id.verify_countersignature(countersigned, origin.public_key_hex) in
+  report.valid
+}
+
+test "wrong origin key fails countersignature verification" {
+  let n = node.new_node("oxford-econ-dept") in
+  let origin = node.new_node("anka-origin") in
+  let impostor = node.new_node("fake-origin") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n.node_secret) in
+  let countersigned = id.countersign_identity(env, origin.node_secret, origin.node_id) in
+  let report = id.verify_countersignature(countersigned, impostor.public_key_hex) in
+  !report.valid
+}
+
+test "identity summary extracts key fields" {
+  let n = node.new_node("oxford-econ-dept") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ@ox.ac.uk", 1000) in
+  let env = id.sign_identity_declaration(decl, n.node_secret) in
+  let summary = id.identity_summary(env) in
+  summary.institution == "University of Oxford" && summary.role == "validator"
+}
+
+test "identity declaration digest is stable" {
+  let n = node.new_node("oxford-econ-dept") in
+  let decl = id.make_identity_declaration(n.node_id, n.public_key_hex, "University of Oxford", "Economics", "validator", "econ@ox.ac.uk", 1000) in
+  let d1 = id.digest_identity_declaration(decl) in
+  let d2 = id.digest_identity_declaration(decl) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}

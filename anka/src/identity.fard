@@ -1,0 +1,107 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/type") as type
+import("canonical") as canon
+import("keypair") as kp
+
+// Identity declaration binds an Ed25519 public key to institutional attributes.
+// Signed by the node itself. Optionally countersigned by the origin node.
+// Any peer can verify the binding without contacting an external identity system.
+
+fn make_identity_declaration(node_id, public_key_hex, institution, department, role, contact, timestamp_unix_secs) {
+  {
+    node_id: node_id,
+    public_key_hex: public_key_hex,
+    institution: institution,
+    department: department,
+    role: role,
+    contact: contact,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn canonical_identity_declaration(decl) {
+  json.canonicalize({
+    node_id: decl.node_id,
+    public_key_hex: decl.public_key_hex,
+    institution: decl.institution,
+    department: decl.department,
+    role: decl.role,
+    contact: decl.contact,
+    timestamp_unix_secs: decl.timestamp_unix_secs
+  })
+}
+
+fn digest_identity_declaration(decl) {
+  canon.digest_text(canonical_identity_declaration(decl))
+}
+
+fn sign_identity_declaration(decl, private_key_hex) {
+  let digest_hex = digest_identity_declaration(decl) in
+  let raw = kp.strip_prefix(digest_hex) in
+  let sig = kp.sign(private_key_hex, raw) in
+  {
+    declaration: decl,
+    digest_hex: digest_hex,
+    signature_hex: sig
+  }
+}
+
+fn verify_identity_declaration(envelope) {
+  let schema_ok = type.of(envelope.declaration) == "record" &&
+    rec.has(envelope.declaration, "node_id") &&
+    rec.has(envelope.declaration, "public_key_hex") &&
+    rec.has(envelope.declaration, "institution") &&
+    rec.has(envelope.declaration, "role") in
+  let digest_ok = if schema_ok then digest_identity_declaration(envelope.declaration) == envelope.digest_hex else false in
+  let key_matches = if schema_ok then str.starts_with(envelope.declaration.node_id, str.concat(["ed25519:", envelope.declaration.public_key_hex])) else false in
+  let sig_ok = if digest_ok then
+    let raw = kp.strip_prefix(envelope.digest_hex) in
+    kp.verify(envelope.declaration.public_key_hex, raw, envelope.signature_hex)
+  else false in
+  {
+    valid: schema_ok && digest_ok && key_matches && sig_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    key_matches: key_matches,
+    signature_ok: sig_ok,
+    institution: envelope.declaration.institution,
+    role: envelope.declaration.role
+  }
+}
+
+fn countersign_identity(envelope, origin_private_key_hex, origin_node_id) {
+  let raw = kp.strip_prefix(envelope.digest_hex) in
+  let countersig = kp.sign(origin_private_key_hex, raw) in
+  {
+    ...envelope,
+    countersignature: {
+      origin_node_id: origin_node_id,
+      signature_hex: countersig
+    }
+  }
+}
+
+fn verify_countersignature(envelope, origin_public_key_hex) {
+  if !rec.has(envelope, "countersignature") then
+    { valid: false, reason: "no countersignature" }
+  else
+    let raw = kp.strip_prefix(envelope.digest_hex) in
+    let sig_ok = kp.verify(origin_public_key_hex, raw, envelope.countersignature.signature_hex) in
+    { valid: sig_ok, reason: if sig_ok then "countersignature valid" else "countersignature invalid" }
+}
+
+fn identity_summary(envelope) {
+  {
+    node_id: envelope.declaration.node_id,
+    institution: envelope.declaration.institution,
+    department: envelope.declaration.department,
+    role: envelope.declaration.role,
+    contact: envelope.declaration.contact,
+    verified: true
+  }
+}
+
+export { make_identity_declaration, canonical_identity_declaration, digest_identity_declaration, sign_identity_declaration, verify_identity_declaration, countersign_identity, verify_countersignature, identity_summary }
