@@ -1,0 +1,66 @@
+import("../src/sdk") as sdk
+import("std/rec") as rec
+
+// These tests require a live node on port 18080.
+// Run: fardrun run --program anka/src/node_process.fard --out out/node
+
+test "health returns ok" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.health(c) in
+  result.ok && rec.has(result.data, "node_id")
+}
+
+test "publish returns digest" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.publish(c, "econ.space", "GDP_Q3", "forecast", "2.3", ["labor:v1"], 1775710900) in
+  result.ok && rec.has(result.data, "digest_hex")
+}
+
+test "query returns claim count" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.query(c, "econ.space", "GDP_Q3") in
+  result.ok && rec.has(result.data, "claim_count")
+}
+
+test "collapse is alias for query" {
+  let c = sdk.client("http://localhost:18080") in
+  let q = sdk.query(c, "econ.space", "GDP_Q3") in
+  let col = sdk.collapse(c, "econ.space", "GDP_Q3") in
+  q.ok == col.ok
+}
+
+test "known returns digest list" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.known(c) in
+  result.ok && rec.has(result.data, "known_digests")
+}
+
+test "sync returns counts" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.sync(c) in
+  result.ok && rec.has(result.data, "claim_count")
+}
+
+test "audit returns summary" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.audit(c) in
+  result.ok && rec.has(result.data, "snapshot_count")
+}
+
+test "add peer returns peer count" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.add_peer(c, "http://localhost:18081") in
+  result.ok && rec.has(result.data, "peer_count")
+}
+
+test "subscribe sets spaces" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.subscribe(c, ["econ.space"]) in
+  result.ok && rec.has(result.data, "subscriptions")
+}
+
+test "registry returns known spaces" {
+  let c = sdk.client("http://localhost:18080") in
+  let result = sdk.registry(c) in
+  result.ok && rec.has(result.data, "registry")
+}

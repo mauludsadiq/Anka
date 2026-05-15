@@ -1,0 +1,21 @@
+import("../src/sdk") as sdk
+
+test "client constructs with base url" {
+  let c = sdk.client("http://localhost:18080") in
+  c.base_url == "http://localhost:18080"
+}
+
+test "client trims trailing slash" {
+  let c = sdk.client("http://localhost:18080/") in
+  c.base_url == "http://localhost:18080"
+}
+
+test "client constructs with https url" {
+  let c = sdk.client("https://anka-node.oxford.edu") in
+  c.base_url == "https://anka-node.oxford.edu"
+}
+
+test "client constructs with port" {
+  let c = sdk.client("http://localhost:18081") in
+  c.base_url == "http://localhost:18081"
+}

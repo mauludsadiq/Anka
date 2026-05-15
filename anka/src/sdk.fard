@@ -1,0 +1,100 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+
+fn client(base_url) {
+  let url = if str.ends_with(base_url, "/") then str.slice(base_url, 0, str.len(base_url) - 1) else base_url in
+  { base_url: url }
+}
+
+fn get(c, path) {
+  let result = http.get(str.concat([c.base_url, path])) in
+  if result.status == 200 then
+    { ok: true, data: json.decode(result.body) }
+  else if result.status == 404 then
+    { ok: false, reason: "not_found", status: 404 }
+  else if result.status == 429 then
+    { ok: false, reason: "rate_limited", status: 429 }
+  else
+    { ok: false, reason: result.body, status: result.status }
+}
+
+fn post(c, path, body) {
+  let result = http.post(str.concat([c.base_url, path]), json.encode(body)) in
+  if result.status == 200 then
+    { ok: true, data: json.decode(result.body) }
+  else if result.status == 429 then
+    { ok: false, reason: "rate_limited", status: 429 }
+  else
+    { ok: false, reason: result.body, status: result.status }
+}
+
+fn health(c) {
+  get(c, "/health")
+}
+
+fn sync(c) {
+  get(c, "/sync")
+}
+
+fn known(c) {
+  get(c, "/known")
+}
+
+fn publish(c, claim_space, subject, predicate, object_value, evidence_refs, timestamp_unix_secs) {
+  post(c, "/publish", {
+    claim_space: claim_space,
+    subject: subject,
+    predicate: predicate,
+    object: object_value,
+    evidence_refs: evidence_refs,
+    timestamp_unix_secs: timestamp_unix_secs
+  })
+}
+
+fn fetch_claim(c, digest) {
+  get(c, str.concat(["/claim/", digest]))
+}
+
+fn query(c, claim_space, subject) {
+  get(c, str.concat(["/query/", claim_space, "/", subject]))
+}
+
+fn audit(c) {
+  get(c, "/audit")
+}
+
+fn audit_trail(c, digest) {
+  get(c, str.concat(["/audit/trail/", digest]))
+}
+
+fn add_peer(c, address) {
+  post(c, "/peer", { address: address })
+}
+
+fn peers(c) {
+  get(c, "/peers")
+}
+
+fn subscribe(c, spaces) {
+  post(c, "/subscribe", { spaces: spaces })
+}
+
+fn subscriptions(c) {
+  get(c, "/subscriptions")
+}
+
+fn registry(c) {
+  get(c, "/registry")
+}
+
+fn fetch_registry(c, origin_address) {
+  post(c, "/registry/fetch", { sender_address: origin_address })
+}
+
+fn collapse(c, claim_space, subject) {
+  query(c, claim_space, subject)
+}
+
+export { client, health, sync, known, publish, fetch_claim, query, audit, audit_trail, add_peer, peers, subscribe, subscriptions, registry, fetch_registry, collapse }
