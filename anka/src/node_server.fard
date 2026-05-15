@@ -9,28 +9,39 @@ import("node") as node
 import("dialer") as dialer
 import("fetch_pipeline") as pipeline
 import("registry_gossip") as rg
+import("scoped_gossip") as sg
 
-fn json_response(state, peers, local_address, registry, data) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
+fn json_response(state, peers, local_address, registry, subscriptions, data) {
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
 }
 
-fn error_response(state, peers, local_address, registry, code, reason) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, response: { status: code, body: json.encode({ ok: false, reason: reason }), content_type: "application/json" } }
+fn error_response(state, peers, local_address, registry, subscriptions, code, reason) {
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, response: { status: code, body: json.encode({ ok: false, reason: reason }), content_type: "application/json" } }
 }
 
 fn has_sender(body) {
   rec.has(body, "sender_address") && body.sender_address != null && body.sender_address != ""
 }
 
-fn handle(state, peers, local_address, registry, req) {
+fn in_scope(subscriptions, claim_space) {
+  list.len(subscriptions) == 0 || list.any(subscriptions, fn(s) { s == "*" || s == claim_space })
+}
+
+fn handle(state, peers, local_address, registry, subscriptions, req) {
   if req.path == "/health" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, { ok: true, node_id: state.node_id })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, node_id: state.node_id })
   else if req.path == "/known" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
   else if req.path == "/sync" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
+  else if req.path == "/subscriptions" && req.method == "GET" then
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, subscriptions: subscriptions })
+  else if req.path == "/subscribe" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next_subs = if rec.has(body, "spaces") then body.spaces else [body.claim_space] in
+    json_response(state, peers, local_address, registry, next_subs, { ok: true, subscriptions: next_subs })
   else if req.path == "/registry" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, { ok: true, registry: registry, registry_digest_hex: rg.make_registry_gossip(registry, state.node_id, 0).registry_digest_hex, known_spaces: rg.make_registry_gossip(registry, state.node_id, 0).known_spaces })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, registry: registry, registry_digest_hex: rg.make_registry_gossip(registry, state.node_id, 0).registry_digest_hex, known_spaces: rg.make_registry_gossip(registry, state.node_id, 0).known_spaces })
   else if req.path == "/registry/gossip" && req.method == "POST" then
     let body = json.decode(req.body) in
     let is_newer = rg.registry_gossip_newer(body, registry) in
@@ -39,62 +50,63 @@ fn handle(state, peers, local_address, registry, req) {
         http.post(str.concat([local_address, "/registry/fetch"]), json.encode({ sender_address: body.sender_address }))
       })
     else null in
-    json_response(state, peers, local_address, registry, { ok: true, is_newer: is_newer, current_version: registry.version, gossip_version: body.version })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, is_newer: is_newer, current_version: registry.version, gossip_version: body.version })
   else if req.path == "/registry/fetch" && req.method == "POST" then
     let body = json.decode(req.body) in
     let fetch_result = rg.fetch_registry(body.sender_address) in
     if fetch_result.ok then
       let update = rg.apply_registry_update(registry, fetch_result.registry) in
       if update.updated then
-        json_response(state, peers, local_address, update.registry, { ok: true, updated: true, new_spaces: update.new_spaces, version: update.registry.version })
+        json_response(state, peers, local_address, update.registry, subscriptions, { ok: true, updated: true, new_spaces: update.new_spaces, version: update.registry.version })
       else
-        json_response(state, peers, local_address, registry, { ok: true, updated: false, reason: update.reason })
+        json_response(state, peers, local_address, registry, subscriptions, { ok: true, updated: false, reason: update.reason })
     else
-      json_response(state, peers, local_address, registry, { ok: false, reason: fetch_result.reason })
+      json_response(state, peers, local_address, registry, subscriptions, { ok: false, reason: fetch_result.reason })
   else if req.path == "/publish" && req.method == "POST" then
     let body = json.decode(req.body) in
     let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
     let _ = dialer.broadcast_gossip(peers, pub.gossip, local_address) in
-    json_response(pub.node, peers, local_address, registry, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
+    json_response(pub.node, peers, local_address, registry, subscriptions, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
   else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 7, str.len(req.path)) in
     if node.has_claim(state, digest) then
-      json_response(state, peers, local_address, registry, { ok: true, envelope: node.fetch_claim(state, digest) })
+      json_response(state, peers, local_address, registry, subscriptions, { ok: true, envelope: node.fetch_claim(state, digest) })
     else
-      error_response(state, peers, local_address, registry, 404, "claim not found")
+      error_response(state, peers, local_address, registry, subscriptions, 404, "claim not found")
   else if req.path == "/gossip" && req.method == "POST" then
     let body = json.decode(req.body) in
-    let needs_fetch = !node.has_claim(state, body.digest_hex) && has_sender(body) in
-    let next = node.receive_gossip(state, body) in
+    let scoped = in_scope(subscriptions, body.claim_space) in
+    let needs_fetch = scoped && !node.has_claim(state, body.digest_hex) && has_sender(body) in
+    let next = if scoped then node.receive_gossip(state, body) else state in
     let _ = if needs_fetch then
       promise.spawn(fn() {
         http.post(str.concat([local_address, "/fetch"]), json.encode({ digest_hex: body.digest_hex, sender_address: body.sender_address, timestamp_unix_secs: body.timestamp_unix_secs }))
       })
     else null in
-    json_response(next, peers, local_address, registry, { ok: true, node_id: next.node_id, known_digest_count: list.len(next.known_digests), fetch_queued: needs_fetch })
+    json_response(next, peers, local_address, registry, subscriptions, { ok: true, node_id: next.node_id, known_digest_count: list.len(next.known_digests), fetch_queued: needs_fetch, in_scope: scoped })
   else if req.path == "/fetch" && req.method == "POST" then
     let body = json.decode(req.body) in
     let result = pipeline.fetch_verify_witness(state, body.sender_address, body.digest_hex, state.node_secret, body.timestamp_unix_secs) in
     if result.ok then
-      json_response(result.node, peers, local_address, registry, { ok: true, digest_hex: body.digest_hex, witnessed: true })
+      json_response(result.node, peers, local_address, registry, subscriptions, { ok: true, digest_hex: body.digest_hex, witnessed: true })
     else
-      json_response(state, peers, local_address, registry, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
+      json_response(state, peers, local_address, registry, subscriptions, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
   else if req.path == "/witness" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next = node.receive_witness(state, body) in
-    json_response(next, peers, local_address, registry, { ok: true, node_id: next.node_id })
+    json_response(next, peers, local_address, registry, subscriptions, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next = node.receive_challenge(state, body) in
-    json_response(next, peers, local_address, registry, { ok: true, node_id: next.node_id })
+    json_response(next, peers, local_address, registry, subscriptions, { ok: true, node_id: next.node_id })
   else if req.path == "/peer" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next_peers = if list.any(peers, fn(p) { p == body.address }) then peers else list.append(peers, body.address) in
-    json_response(state, next_peers, local_address, registry, { ok: true, peer_count: list.len(next_peers), address: body.address })
+    json_response(state, next_peers, local_address, registry, subscriptions, { ok: true, peer_count: list.len(next_peers), address: body.address })
   else if req.path == "/peers" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, { ok: true, peers: peers })
+    json_response(state, peers, local_address, registry, subscriptions, { ok: true, peers: peers })
   else
-    error_response(state, peers, local_address, registry, 404, "unknown route")
+    error_response(state, peers, local_address, registry, subscriptions, 404, "unknown route")
 }
 
 export { handle, json_response, error_response }

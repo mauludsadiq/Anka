@@ -31,6 +31,9 @@ let registry_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'regis
 let empty_registry = reg.genesis(boot_node, 0)
 let initial_registry = if list.len(registry_rows) > 0 then json.decode(registry_rows[0].value) else empty_registry
 
+let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'")
+let initial_subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else []
+
 let _ = net.serve(port, fn(req) {
   let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'") in
   let state = json.decode(rows[0].value) in
@@ -38,9 +41,12 @@ let _ = net.serve(port, fn(req) {
   let peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else [] in
   let reg_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'registry'") in
   let registry = if list.len(reg_rows) > 0 then json.decode(reg_rows[0].value) else empty_registry in
-  let result = server.handle(state, peers, local_address, registry, req) in
+  let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'") in
+  let subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else [] in
+  let result = server.handle(state, peers, local_address, registry, subscriptions, req) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", json.encode(result.next_registry), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", json.encode(result.next_subscriptions), "')"])) in
   result.response
 })
