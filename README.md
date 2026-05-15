@@ -14,13 +14,52 @@ Written in [Fard](https://github.com/mauludsadiq/FARD).
 
 ## The Problem
 
-The internet was built for humans fetching documents. Its trust primitives — domain names, TLS certificates, HTML pages — assume a human at the end of the chain who reads, interprets, and judges.
+AI systems are producing high-stakes claims — research findings, medical recommendations, legal analysis, financial forecasts — with no infrastructure for verifying where those claims came from, who checked them, or whether they were contested.
 
-AI systems cannot operate on that assumption. An autonomous agent cannot “just read the page.” It needs to know: who made this claim, when, on what evidence, who verified it, who contested it, and whether the reasoning behind it can be independently replicated. None of that is native to HTTP.
+The current workarounds are bad. RAG systems cite URLs that change. Fine-tuned models inherit training data provenance that nobody can reconstruct. Agents pass outputs between each other with no attestation layer. When something goes wrong, there is no trail.
 
-The result is that AI systems today either hallucinate provenance, inherit the trust assumptions of whatever human-readable system they’re scraping, or require trusted centralized intermediaries to vouch for information quality. None of these scale. None of them are honest about uncertainty. And none of them support the kind of structured disagreement that complex domains — science, economics, law, medicine — actually exhibit.
+This is not a model problem. It is an infrastructure problem. The internet has no native primitive for a verifiable claim — a statement with intrinsic provenance, independent verification, and a contestation record that survives the session that produced it.
 
-ANKA is built on a different primitive.
+ANKA is that primitive.
+
+-----
+
+## Quickstart
+
+**Requirements:** [Fard](https://github.com/mauludsadiq/FARD) runtime installed.
+
+```bash
+# Clone and start an origin node
+git clone https://github.com/mauludsadiq/Anka && cd Anka
+fardrun run --program anka/src/origin_process.fard --out out/origin &
+fardrun run --program anka/src/node_process.fard --out out/node &
+sleep 2
+
+# Register peer
+curl -X POST http://localhost:18080/peer \
+  -H "Content-Type: application/json" \
+  -d '{"address":"http://localhost:18090"}'
+
+# Publish a claim
+curl -X POST http://localhost:18080/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claim_space": "anka.interpretive.econ",
+    "subject": "GDP_Q3_2026",
+    "predicate": "forecast_growth",
+    "object": "2.3",
+    "evidence_refs": ["labor_data:v1"],
+    "timestamp_unix_secs": 1775710900
+  }'
+
+# Query the collapsed result with provenance
+curl http://localhost:18080/query/anka.interpretive.econ/GDP_Q3_2026
+
+# Inspect the full audit trail
+curl http://localhost:18080/audit/trail/{digest_hex}
+```
+
+The published claim is automatically gossiped to peers, fetched, verified against its digest, and witnessed. The query endpoint returns the policy-collapsed answer with scores and full provenance in a single call.
 
 -----
 
@@ -196,6 +235,20 @@ Two-node mesh with outbound gossip broadcast
 
 Each layer enforces its own invariant. No layer trusts the one below blindly.
 
+## Why Not X
+
+**Why not a database?** A database requires a trusted operator. Any node can query ANKA without trusting the node it queries — the claim’s digest is its verification. The operator cannot tamper with a claim without producing a new digest that won’t match what peers have already witnessed.
+
+**Why not IPFS or a content-addressed store?** IPFS addresses content but adds no epistemic layer. It cannot tell you who made a claim, whether it was independently verified, or whether it was contested. ANKA adds witnessing, challenge, reputation, and policy-collapsed consensus on top of content addressing.
+
+**Why not a blockchain?** Blockchains require global consensus, which is expensive and slow, and they treat all claims as equivalent. ANKA explicitly preserves disagreement in interpretive domains — a competing forecast is not a conflict to resolve, it is information to retain. Collapse happens at the policy layer per consuming node, not globally.
+
+**Why not a vector database with citations?** Citation tracking is append-only and passive. ANKA is active — nodes recompute results, issue signed attestations, file structured challenges. A claim’s witness history reflects actual independent verification, not just storage.
+
+**Why now?** AI systems are moving from single-model outputs to multi-agent pipelines where claims pass between systems with no attestation. The attack surface for hallucinated provenance is growing faster than the tools to detect it. ANKA is the missing substrate layer.
+
+-----
+
 -----
 
 ## Node API
@@ -263,6 +316,36 @@ fardrun run --program anka/src/sim_runner.fard --out out/sim
 # Run the full test suite
 fardrun test --program anka/tests/test_anka_layer1.fard
 ```
+
+-----
+
+## Deployment Scenario
+
+A computational economics group at Oxford and a quantitative research group at MIT both use AI systems to produce GDP forecasts. They want their outputs to be independently verifiable and their disagreements to be structurally recorded.
+
+**Setup (one hour):**
+
+- Each institution runs a node process behind a TLS-terminating reverse proxy per `DEPLOYMENT.md`
+- Each node declares an identity binding its Ed25519 key to the institution and department
+- Both nodes register with a shared origin node and fetch the claim space registry
+- Each node subscribes to `anka.interpretive.econ`
+
+**Operation:**
+
+- Oxford’s AI publishes its forecast as a signed claim. MIT’s AI publishes its.
+- Each node’s validator automatically fetches, verifies, and witnesses the other’s claim
+- Reputation accumulates per-node per-claim-space based on verification history
+- A policy node applies weighted collapse under declared rules
+
+**Consumption:**
+
+```bash
+GET /query/anka.interpretive.econ/GDP_Q3_2026
+```
+
+Returns: both forecasts, their witness scores, the policy winner, and the full provenance of each — issuer identity, evidence references, timestamps, verification history. Any downstream system, including another AI, can verify the result independently against the digest.
+
+**No central coordinator. No shared database. No trust assumption beyond the genesis registry.**
 
 -----
 
