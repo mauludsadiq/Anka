@@ -1,0 +1,68 @@
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/http") as http
+import("registry") as reg
+import("canonical") as canon
+
+fn make_registry_gossip(registry, issuer_node_id, timestamp_unix_secs) {
+  {
+    kind: "REGISTRY_GOSSIP",
+    registry_digest_hex: reg.digest(registry),
+    version: registry.version,
+    issuer_node_id: issuer_node_id,
+    known_spaces: reg.known_spaces(registry),
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn registry_gossip_newer(gossip, local_registry) {
+  gossip.version > local_registry.version
+}
+
+fn fetch_registry(peer_address) {
+  let url = str.concat([peer_address, "/registry"]) in
+  let result = http.get(url) in
+  if result.status == 200 then
+    let body = json.decode(result.body) in
+    if body.ok then
+      { ok: true, registry: body.registry, registry_digest_hex: body.registry_digest_hex }
+    else
+      { ok: false, registry: null, reason: "peer returned not ok" }
+  else
+    { ok: false, registry: null, reason: str.concat(["fetch failed: ", str.from(result.status)]) }
+}
+
+fn verify_registry_chain(registry, known_digest_hex) {
+  if registry.version == 0 then
+    { valid: true, reason: "genesis" }
+  else if registry.parent_registry_digest_hex == null then
+    { valid: false, reason: "missing parent digest" }
+  else
+    { valid: true, reason: "chain intact" }
+}
+
+fn apply_registry_update(local_registry, remote_registry) {
+  if remote_registry.version <= local_registry.version then
+    { updated: false, registry: local_registry, reason: "not newer" }
+  else
+    let chain_ok = verify_registry_chain(remote_registry, reg.digest(local_registry)) in
+    if !chain_ok.valid then
+      { updated: false, registry: local_registry, reason: chain_ok.reason }
+    else
+      let new_spaces = list.filter(reg.known_spaces(remote_registry), fn(s) {
+        !reg.has_space(local_registry, s)
+      }) in
+      { updated: true, registry: remote_registry, new_spaces: new_spaces, reason: "applied" }
+}
+
+fn discover_spaces(local_registry, peer_address) {
+  let fetch_result = fetch_registry(peer_address) in
+  if !fetch_result.ok then
+    { updated: false, registry: local_registry, reason: fetch_result.reason }
+  else
+    apply_registry_update(local_registry, fetch_result.registry)
+}
+
+export { make_registry_gossip, registry_gossip_newer, fetch_registry, verify_registry_chain, apply_registry_update, discover_spaces }

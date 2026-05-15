@@ -1,0 +1,70 @@
+import("../src/registry_gossip") as rg
+import("../src/registry") as reg
+import("../src/origin") as origin
+import("../src/node") as node
+import("../src/claim_space") as space
+import("std/list") as list
+
+test "registry gossip carries version and known spaces" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let gossip = rg.make_registry_gossip(g.registry, n.node_id, 1000) in
+  gossip.kind == "REGISTRY_GOSSIP" && gossip.version == 0
+}
+
+test "registry gossip newer detects higher version" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("new.space", "invariant", "single-winner", "test") in
+  let g2 = origin.register_space(g, cs, n, 1001) in
+  let gossip = rg.make_registry_gossip(g2.registry, n.node_id, 1001) in
+  rg.registry_gossip_newer(gossip, g.registry)
+}
+
+test "registry gossip not newer when same version" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let gossip = rg.make_registry_gossip(g.registry, n.node_id, 1000) in
+  !rg.registry_gossip_newer(gossip, g.registry)
+}
+
+test "apply registry update rejects older version" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("new.space", "invariant", "single-winner", "test") in
+  let g2 = origin.register_space(g, cs, n, 1001) in
+  let result = rg.apply_registry_update(g2.registry, g.registry) in
+  !result.updated && result.reason == "not newer"
+}
+
+test "apply registry update accepts newer version with new spaces" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("new.space", "invariant", "single-winner", "test") in
+  let g2 = origin.register_space(g, cs, n, 1001) in
+  let result = rg.apply_registry_update(g.registry, g2.registry) in
+  result.updated && list.len(result.new_spaces) > 0
+}
+
+test "discover spaces identifies new spaces not in local registry" {
+  let n = node.new_node("origin") in
+  let g1 = origin.boot_genesis(n, 1000) in
+  let cs = space.make_claim_space("late.space", "interpretive", "plural", "registered after genesis") in
+  let g2 = origin.register_space(g1, cs, n, 1001) in
+  let result = rg.apply_registry_update(g1.registry, g2.registry) in
+  result.updated && list.any(result.new_spaces, fn(s) { s == "late.space" })
+}
+
+test "verify registry chain accepts genesis" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_genesis(n, 1000) in
+  let report = rg.verify_registry_chain(g.registry, "none") in
+  report.valid
+}
+
+test "known spaces in gossip matches registry" {
+  let n = node.new_node("origin") in
+  let g = origin.boot_with_default_spaces(n, 1000) in
+  let gossip = rg.make_registry_gossip(g.registry, n.node_id, 1000) in
+  list.len(gossip.known_spaces) == 4
+}

@@ -43,6 +43,10 @@ let _ = net.serve(port, fn(req) {
     let obj = origin.genesis_object(g) in
     let report = origin.verify_genesis(obj, boot_node.node_id) in
     { status: 200, body: json.encode({ ok: true, report: report }), content_type: "application/json" }
+  else if req.path == "/registry" && req.method == "GET" then
+    let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'") in
+    let g = json.decode(rows[0].value) in
+    { status: 200, body: json.encode({ ok: true, registry: g.registry, registry_digest_hex: g.registry_digest_hex }), content_type: "application/json" }
   else if req.path == "/spaces" && req.method == "GET" then
     let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'genesis'") in
     let g = json.decode(rows[0].value) in
