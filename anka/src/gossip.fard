@@ -1,19 +1,21 @@
-fn make_gossip_digest(digest_hex, claim_space, issuer_node_id, witness_count) {
+fn make_gossip_digest(digest_hex, claim_space, issuer_node_id, witness_count, timestamp_unix_secs) {
   {
     kind: "GOSSIP_DIGEST",
     digest_hex: digest_hex,
     claim_space: claim_space,
     issuer_node_id: issuer_node_id,
-    witness_count: witness_count
+    witness_count: witness_count,
+    timestamp_unix_secs: timestamp_unix_secs
   }
 }
 
-fn from_envelope(envelope, witness_count) {
+fn from_envelope(envelope, witness_count, timestamp_unix_secs) {
   make_gossip_digest(
     envelope.digest_hex,
     envelope.claim.claim_space,
     envelope.claim.issuer_node_id,
-    witness_count
+    witness_count,
+    timestamp_unix_secs
   )
 }
 

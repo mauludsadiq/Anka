@@ -9,6 +9,7 @@ import("node_server") as server
 
 let port = 18080
 let node_name = "anka-node"
+let local_address = "http://localhost:18080"
 let db_path = "file:out/node/anka_node.db?cache=shared&mode=rwc"
 
 let db = sqlite.open(db_path)
@@ -30,7 +31,7 @@ let _ = net.serve(port, fn(req) {
   let state = json.decode(rows[0].value) in
   let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'") in
   let peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else [] in
-  let result = server.handle(state, peers, req) in
+  let result = server.handle(state, peers, local_address, req) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
   result.response

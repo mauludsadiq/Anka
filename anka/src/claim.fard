@@ -68,4 +68,16 @@ fn verify_envelope(envelope, issuer_secret) {
   }
 }
 
-export { make_claim, sign_claim, envelope_digest_matches, envelope_signature_valid, schema_valid_claim, schema_valid_envelope, verify_envelope }
+export { make_claim, sign_claim, envelope_digest_matches, envelope_signature_valid, schema_valid_claim, schema_valid_envelope, verify_envelope, verify_envelope_digest_only }
+
+fn verify_envelope_digest_only(envelope) {
+  let schema_ok = schema_valid_envelope(envelope) in
+  let digest_ok = if schema_ok then envelope_digest_matches(envelope) else false in
+  {
+    accepted: schema_ok && digest_ok,
+    schema_ok: schema_ok,
+    digest_ok: digest_ok,
+    signature_ok: null,
+    digest_hex: envelope.digest_hex
+  }
+}

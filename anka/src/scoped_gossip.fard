@@ -47,7 +47,7 @@ fn scoped_gossip_once(from_node, to_node, to_subscription, peer_book, timestamp_
   }) in
   list.fold(scoped_digests, { node: to_node, sent_count: 0, filtered_count: list.len(from_node.known_digests) - list.len(scoped_digests) }, fn(acc, d) {
     let env = node.fetch_claim(from_node, d) in
-    let g = gossip.from_envelope(env, 0) in
+    let g = gossip.from_envelope(env, 0, timestamp_unix_secs) in
     let wire = transport.make_gossip_wire(from_node, g, timestamp_unix_secs) in
     let rx = transport.receive_wire(peer_book, acc.node, wire) in
     if rx.accepted then

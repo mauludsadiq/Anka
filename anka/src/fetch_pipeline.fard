@@ -1,0 +1,59 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("node") as node
+import("claim") as claim
+import("witness") as witness
+import("canonical") as canon
+
+fn fetch_envelope(peer_address, digest_hex) {
+  let url = str.concat([peer_address, "/claim/", digest_hex]) in
+  let result = http.get(url) in
+  if result.status == 200 then
+    let body = json.decode(result.body) in
+    if body.ok then
+      { ok: true, envelope: body.envelope }
+    else
+      { ok: false, envelope: null, reason: "peer returned not ok" }
+  else
+    { ok: false, envelope: null, reason: str.concat(["fetch failed: ", str.from(result.status)]) }
+}
+
+fn verify_and_witness(local_node, envelope, timestamp_unix_secs) {
+  let report = claim.verify_envelope_digest_only(envelope) in
+  if report.accepted then
+    let w = witness.make_witness(envelope.digest_hex, local_node.node_id, "structural", timestamp_unix_secs, local_node.node_secret) in
+    let next_node = { ...local_node,
+      claims: rec.set(local_node.claims, envelope.digest_hex, envelope),
+      witnesses: rec.set(local_node.witnesses, envelope.digest_hex, w),
+      known_digests: list.dedupe(list.append(local_node.known_digests, envelope.digest_hex))
+    } in
+    { ok: true, node: next_node, witness: w, reason: "witnessed" }
+  else
+    { ok: false, node: local_node, witness: null, reason: "digest or schema invalid" }
+}
+
+fn fetch_verify_witness(local_node, peer_address, digest_hex, issuer_secret, timestamp_unix_secs) {
+  let fetch_result = fetch_envelope(peer_address, digest_hex) in
+  if fetch_result.ok then
+    let result = verify_and_witness(local_node, fetch_result.envelope, timestamp_unix_secs) in
+    {
+      ok: result.ok,
+      node: result.node,
+      witness: result.witness,
+      digest_hex: digest_hex,
+      reason: result.reason
+    }
+  else
+    {
+      ok: false,
+      node: local_node,
+      witness: null,
+      digest_hex: digest_hex,
+      reason: fetch_result.reason
+    }
+}
+
+export { fetch_envelope, verify_and_witness, fetch_verify_witness }
