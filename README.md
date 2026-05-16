@@ -309,6 +309,8 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 
 **Capability-scoped access.** Nodes operate in open mode (no capabilities required) or locked mode (capabilities required per claim space). Capabilities are signed Ed25519 bearer tokens issued by a trusted node, scoped to specific claim spaces and rights (publish/witness/challenge/admin). Capabilities can be revoked. When locked, publish to an unauthorized claim space returns 403. The origin node is the root of trust.
 
+**Distributed Bay2 storage.** ANKA nodes write claims and operations to a networked Bay2 server (port 19000) over HTTP. The Bay2 server stores objects in a digest-addressed object store, indexes them in a monotone index by kind/author/time/tag, and records every operation in a causal replay log. The epistemic layer and the operational substrate are fully separated — ANKA nodes do not manage storage, Bay2 does.
+
 **Bay2 integration — live.** The ANKA-Bay2 bridge is implemented and running. Every claim published to an ANKA node is simultaneously written to a Bay2 object store, indexed in a monotone index by kind/author/time/claim_space, and recorded as a signed operation in a Bay2 replay log. The bay2_store is persisted to SQLite alongside the existing flat state. Witnesses are also shadow-written to the Bay2 store. The full epistemic history of any node is now replayable from the Bay2 operation log.
 
 **First production deployment.** The protocol is ready. The mesh has been tested across five nodes on one machine. The economic layer is implemented. What remains is running it between two institutions on separate machines, with real operators, real claim spaces, and real stakes.
