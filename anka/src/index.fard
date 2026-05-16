@@ -1,0 +1,95 @@
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+import("shard") as shard
+
+fn empty_index() {
+  {
+    digest_index: {},
+    subject_index: {},
+    issuer_index: {},
+    time_index: {}
+  }
+}
+
+fn subject_key(claim_space, subject) {
+  str.concat([claim_space, "|", subject])
+}
+
+fn add_to_list_index(index_map, key, digest_hex) {
+  let existing = rec.getOr(index_map, key, []) in
+  if list.any(existing, fn(d) { d == digest_hex }) then index_map
+  else rec.set(index_map, key, list.append(existing, digest_hex))
+}
+
+fn index_claim(idx, envelope) {
+  let digest = envelope.digest_hex in
+  let claim = envelope.claim in
+  let sk = shard.shard_key_from_envelope(envelope) in
+  let subj_key = subject_key(claim.claim_space, claim.subject) in
+  let bucket = str.from(shard.time_bucket(claim.timestamp_unix_secs)) in
+  {
+    digest_index: rec.set(idx.digest_index, digest, sk),
+    subject_index: add_to_list_index(idx.subject_index, subj_key, digest),
+    issuer_index: add_to_list_index(idx.issuer_index, claim.issuer_node_id, digest),
+    time_index: add_to_list_index(idx.time_index, bucket, digest)
+  }
+}
+
+fn lookup_digest(idx, digest_hex) {
+  rec.getOr(idx.digest_index, digest_hex, null)
+}
+
+fn lookup_subject(idx, claim_space, subject) {
+  rec.getOr(idx.subject_index, subject_key(claim_space, subject), [])
+}
+
+fn lookup_issuer(idx, issuer_node_id) {
+  rec.getOr(idx.issuer_index, issuer_node_id, [])
+}
+
+fn lookup_time(idx, timestamp_unix_secs) {
+  let bucket = str.from(shard.time_bucket(timestamp_unix_secs)) in
+  rec.getOr(idx.time_index, bucket, [])
+}
+
+fn filter_index_map(index_map, digest_hex) {
+  list.fold(rec.keys(index_map), {}, fn(acc, k) {
+    let v = rec.get(index_map, k) in
+    let filtered = list.filter(v, fn(d) { d != digest_hex }) in
+    if list.len(filtered) == 0 then acc else rec.set(acc, k, filtered)
+  })
+}
+
+fn remove_digest(idx, digest_hex) {
+  let next_digest = rec.remove(idx.digest_index, digest_hex) in
+  let next_subject = filter_index_map(idx.subject_index, digest_hex) in
+  let next_issuer = filter_index_map(idx.issuer_index, digest_hex) in
+  let next_time = filter_index_map(idx.time_index, digest_hex) in
+  {
+    digest_index: next_digest,
+    subject_index: next_subject,
+    issuer_index: next_issuer,
+    time_index: next_time
+  }
+}
+
+fn merge_indexes(a, b) {
+  let all_digests = rec.keys(b.digest_index) in
+  list.fold(all_digests, a, fn(acc, digest) {
+    let sk = rec.get(b.digest_index, digest) in
+    let acc2 = { ...acc, digest_index: rec.set(acc.digest_index, digest, sk) } in
+    acc2
+  })
+}
+
+fn index_summary(idx) {
+  {
+    digest_count: list.len(rec.keys(idx.digest_index)),
+    subject_count: list.len(rec.keys(idx.subject_index)),
+    issuer_count: list.len(rec.keys(idx.issuer_index)),
+    time_bucket_count: list.len(rec.keys(idx.time_index))
+  }
+}
+
+export { empty_index, subject_key, index_claim, lookup_digest, lookup_subject, lookup_issuer, lookup_time, remove_digest, merge_indexes, index_summary }

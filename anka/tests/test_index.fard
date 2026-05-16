@@ -1,0 +1,79 @@
+import("../src/index") as idx
+import("../src/node") as node
+import("../src/shard") as shard
+import("std/list") as list
+
+test "index starts empty" {
+  let i = idx.empty_index() in
+  let s = idx.index_summary(i) in
+  s.digest_count == 0 && s.subject_count == 0 && s.issuer_count == 0 && s.time_bucket_count == 0
+}
+
+test "indexing claim records digest location" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.empty_index(), pub.envelope) in
+  let sk = idx.lookup_digest(i, pub.envelope.digest_hex) in
+  sk != null && sk == shard.shard_key_from_envelope(pub.envelope)
+}
+
+test "subject lookup returns matching digests" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.empty_index(), pub.envelope) in
+  let digests = idx.lookup_subject(i, "econ.space", "GDP") in
+  list.len(digests) == 1 && list.any(digests, fn(d) { d == pub.envelope.digest_hex })
+}
+
+test "issuer lookup returns matching digests" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.empty_index(), pub.envelope) in
+  let digests = idx.lookup_issuer(i, n.node_id) in
+  list.len(digests) == 1 && list.any(digests, fn(d) { d == pub.envelope.digest_hex })
+}
+
+test "time lookup returns matching digests" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.empty_index(), pub.envelope) in
+  let digests = idx.lookup_time(i, 1775710900) in
+  list.len(digests) == 1 && list.any(digests, fn(d) { d == pub.envelope.digest_hex })
+}
+
+test "duplicate indexing deduplicates digest" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.index_claim(idx.empty_index(), pub.envelope), pub.envelope) in
+  let digests = idx.lookup_subject(i, "econ.space", "GDP") in
+  list.len(digests) == 1
+}
+
+test "merge indexes combines without duplicates" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let i1 = idx.index_claim(idx.empty_index(), p1.envelope) in
+  let i2 = idx.index_claim(idx.empty_index(), p2.envelope) in
+  let merged = idx.merge_indexes(i1, i2) in
+  let s = idx.index_summary(merged) in
+  s.digest_count == 2
+}
+
+test "removing digest updates all indexes" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let i = idx.index_claim(idx.empty_index(), pub.envelope) in
+  let removed = idx.remove_digest(i, pub.envelope.digest_hex) in
+  let s = idx.index_summary(removed) in
+  s.digest_count == 0 && s.subject_count == 0 && s.issuer_count == 0 && s.time_bucket_count == 0
+}
+
+test "index summary returns counts" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let i = idx.index_claim(idx.index_claim(idx.empty_index(), p1.envelope), p2.envelope) in
+  let s = idx.index_summary(i) in
+  s.digest_count == 2 && s.subject_count == 2 && s.issuer_count == 1 && s.time_bucket_count == 1
+}
