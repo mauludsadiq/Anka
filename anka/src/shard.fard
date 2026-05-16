@@ -1,0 +1,141 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/hash") as hash
+import("std/json") as json
+
+// Shard key structure:
+// {claim_space}:{time_bucket}:{digest_prefix}
+//
+// time_bucket = timestamp_unix_secs / 86400  (one bucket per day)
+// digest_prefix = first 4 hex chars of digest (gives 65536 buckets)
+//
+// A node subscribes to a set of shard keys.
+// Claims are stored per shard, not globally.
+// Gossip is filtered by shard subscription.
+
+fn time_bucket(timestamp_unix_secs) {
+  timestamp_unix_secs / 86400
+}
+
+fn digest_prefix(digest_hex) {
+  let raw = if str.starts_with(digest_hex, "sha256:") then
+    str.slice(digest_hex, 7, str.len(digest_hex))
+  else digest_hex in
+  str.slice(raw, 0, 4)
+}
+
+fn shard_key(claim_space, timestamp_unix_secs, digest_hex) {
+  let bucket = time_bucket(timestamp_unix_secs) in
+  let prefix = digest_prefix(digest_hex) in
+  str.concat([claim_space, ":", str.from(bucket), ":", prefix])
+}
+
+fn shard_key_from_envelope(envelope) {
+  shard_key(
+    envelope.claim.claim_space,
+    envelope.claim.timestamp_unix_secs,
+    envelope.digest_hex
+  )
+}
+
+fn space_shard_prefix(claim_space) {
+  str.concat([claim_space, ":"])
+}
+
+fn bucket_shard_prefix(claim_space, timestamp_unix_secs) {
+  str.concat([claim_space, ":", str.from(time_bucket(timestamp_unix_secs)), ":"])
+}
+
+// Sharded store — claims partitioned by shard key
+fn empty_store() {
+  { shards: {}, shard_index: [], total_claims: 0 }
+}
+
+fn store_claim(store, envelope) {
+  let sk = shard_key_from_envelope(envelope) in
+  let shard = rec.getOr(store.shards, sk, {}) in
+  let next_shard = rec.set(shard, envelope.digest_hex, envelope) in
+  let next_shards = rec.set(store.shards, sk, next_shard) in
+  let next_index = if list.any(store.shard_index, fn(k) { k == sk }) then
+    store.shard_index
+  else
+    list.append(store.shard_index, sk)
+  in
+  {
+    shards: next_shards,
+    shard_index: next_index,
+    total_claims: store.total_claims + 1
+  }
+}
+
+fn get_claim(store, digest_hex) {
+  let found = list.find(store.shard_index, fn(sk) {
+    rec.has(rec.getOr(store.shards, sk, {}), digest_hex)
+  }) in
+  if found.some == null then null
+  else rec.get(rec.get(store.shards, found.some), digest_hex)
+}
+
+fn has_claim(store, digest_hex) {
+  list.any(store.shard_index, fn(sk) {
+    rec.has(rec.getOr(store.shards, sk, {}), digest_hex)
+  })
+}
+
+fn claims_in_space(store, claim_space) {
+  let prefix = space_shard_prefix(claim_space) in
+  let matching_shards = list.filter(store.shard_index, fn(sk) {
+    str.starts_with(sk, prefix)
+  }) in
+  list.fold(matching_shards, [], fn(acc, sk) {
+    let shard = rec.getOr(store.shards, sk, {}) in
+    let envs = list.map(rec.keys(shard), fn(k) { rec.get(shard, k) }) in
+    list.concat([acc, envs])
+  })
+}
+
+fn claims_in_bucket(store, claim_space, timestamp_unix_secs) {
+  let prefix = bucket_shard_prefix(claim_space, timestamp_unix_secs) in
+  let matching_shards = list.filter(store.shard_index, fn(sk) {
+    str.starts_with(sk, prefix)
+  }) in
+  list.fold(matching_shards, [], fn(acc, sk) {
+    let shard = rec.getOr(store.shards, sk, {}) in
+    let envs = list.map(rec.keys(shard), fn(k) { rec.get(shard, k) }) in
+    list.concat([acc, envs])
+  })
+}
+
+fn all_claims(store) {
+  list.fold(store.shard_index, [], fn(acc, sk) {
+    let shard = rec.getOr(store.shards, sk, {}) in
+    let envs = list.map(rec.keys(shard), fn(k) { rec.get(shard, k) }) in
+    list.concat([acc, envs])
+  })
+}
+
+fn all_digests(store) {
+  list.map(all_claims(store), fn(env) { env.digest_hex })
+}
+
+fn shard_count(store) {
+  list.len(store.shard_index)
+}
+
+fn shard_summary(store) {
+  list.map(store.shard_index, fn(sk) {
+    let shard = rec.getOr(store.shards, sk, {}) in
+    { shard_key: sk, claim_count: list.len(rec.keys(shard)) }
+  })
+}
+
+fn merge_stores(a, b) {
+  let b_claims = all_claims(b) in
+  list.fold(b_claims, a, fn(acc, env) {
+    if has_claim(acc, env.digest_hex) then acc
+    else store_claim(acc, env)
+  })
+}
+
+export { time_bucket, digest_prefix, shard_key, shard_key_from_envelope, space_shard_prefix, bucket_shard_prefix, empty_store, store_claim, get_claim, has_claim, claims_in_space, claims_in_bucket, all_claims, all_digests, shard_count, shard_summary, merge_stores }

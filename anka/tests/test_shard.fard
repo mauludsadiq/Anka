@@ -1,0 +1,103 @@
+import("../src/shard") as shard
+import("../src/node") as node
+import("std/list") as list
+import("std/str") as str
+
+test "shard key is stable for same inputs" {
+  let k1 = shard.shard_key("econ.space", 1775710900, "sha256:abc123") in
+  let k2 = shard.shard_key("econ.space", 1775710900, "sha256:abc123") in
+  k1 == k2
+}
+
+test "different claim spaces produce different shard keys" {
+  let k1 = shard.shard_key("econ.space", 1775710900, "sha256:abc123") in
+  let k2 = shard.shard_key("science.space", 1775710900, "sha256:abc123") in
+  k1 != k2
+}
+
+test "different days produce different shard keys" {
+  let k1 = shard.shard_key("econ.space", 1775710900, "sha256:abc123") in
+  let k2 = shard.shard_key("econ.space", 1775710900 + 86400, "sha256:abc123") in
+  k1 != k2
+}
+
+test "same day same space produces same time bucket" {
+  let b1 = shard.time_bucket(1775710800) in
+  let b2 = shard.time_bucket(1775710900) in
+  b1 == b2
+}
+
+test "store starts empty" {
+  let s = shard.empty_store() in
+  s.total_claims == 0 && shard.shard_count(s) == 0
+}
+
+test "store claim increments total" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let s = shard.store_claim(shard.empty_store(), pub.envelope) in
+  s.total_claims == 1
+}
+
+test "has claim returns true after store" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let s = shard.store_claim(shard.empty_store(), pub.envelope) in
+  shard.has_claim(s, pub.envelope.digest_hex)
+}
+
+test "get claim returns envelope after store" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let s = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let env = shard.get_claim(s, pub.envelope.digest_hex) in
+  env != null && env.digest_hex == pub.envelope.digest_hex
+}
+
+test "claims in space filters by claim space" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let s = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let econ = shard.claims_in_space(s, "econ.space") in
+  let sci = shard.claims_in_space(s, "science.space") in
+  list.len(econ) == 1 && list.len(sci) == 1
+}
+
+test "claims in bucket filters by day" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "econ.space", "GDP", "forecast", "2.4", [], 1775710900 + 86400) in
+  let s = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let day1 = shard.claims_in_bucket(s, "econ.space", 1775710900) in
+  let day2 = shard.claims_in_bucket(s, "econ.space", 1775710900 + 86400) in
+  list.len(day1) == 1 && list.len(day2) == 1
+}
+
+test "merge stores combines claims without duplicates" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "econ.space", "GDP", "forecast", "2.4", [], 1775710900) in
+  let s1 = shard.store_claim(shard.empty_store(), p1.envelope) in
+  let s2 = shard.store_claim(shard.empty_store(), p2.envelope) in
+  let merged = shard.merge_stores(s1, s2) in
+  merged.total_claims == 2
+}
+
+test "all digests returns all stored digests" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let s = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let digests = shard.all_digests(s) in
+  list.len(digests) == 2
+}
+
+test "shard summary shows per-shard claim counts" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let s = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let summary = shard.shard_summary(s) in
+  list.len(summary) == 2
+}
