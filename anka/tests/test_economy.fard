@@ -1,0 +1,123 @@
+import("../src/economy") as econ
+import("std/list") as list
+
+test "ledger starts empty" {
+  let l = econ.empty_ledger() in
+  econ.get_balance(l, "node1") == 0
+}
+
+test "credit increases balance" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 500) in
+  econ.get_balance(l, "node1") == 500
+}
+
+test "debit decreases balance" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 500) in
+  let l2 = econ.debit(l, "node1", 200) in
+  econ.get_balance(l2, "node1") == 300
+}
+
+test "balance floors at zero" {
+  let l = econ.debit(econ.empty_ledger(), "node1", 999) in
+  econ.get_balance(l, "node1") == 0
+}
+
+test "can afford returns true when sufficient balance" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 500) in
+  econ.can_afford(l, "node1", 100)
+}
+
+test "can afford returns false when insufficient balance" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 50) in
+  !econ.can_afford(l, "node1", 100)
+}
+
+test "publish cost increases with evidence refs" {
+  let base = econ.publish_cost("econ.space", 0) in
+  let with_refs = econ.publish_cost("econ.space", 3) in
+  with_refs > base && with_refs == base + 30
+}
+
+test "charge publish deducts cost" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 1000) in
+  let result = econ.charge_publish(l, "node1", "econ.space", 0) in
+  result.ok && econ.get_balance(result.ledger, "node1") == 1000 - econ.BASE_PUBLISH_COST
+}
+
+test "charge publish fails with insufficient balance" {
+  let result = econ.charge_publish(econ.empty_ledger(), "node1", "econ.space", 0) in
+  !result.ok
+}
+
+test "witness reward credits node" {
+  let l = econ.empty_ledger() in
+  let result = econ.reward_witness(l, "node1", "econ.space", "sha256:abc") in
+  result.ok && econ.get_balance(result.ledger, "node1") == econ.BASE_WITNESS_REWARD
+}
+
+test "challenge reward credits challenger" {
+  let l = econ.empty_ledger() in
+  let result = econ.reward_challenge(l, "node1", "econ.space", "sha256:abc") in
+  result.ok && econ.get_balance(result.ledger, "node1") == econ.BASE_CHALLENGE_REWARD
+}
+
+test "lock stake reduces balance and records stake" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 5000) in
+  let result = econ.lock_stake(l, "node1", "validator", 1000) in
+  result.ok &&
+  econ.get_balance(result.ledger, "node1") == 4000 &&
+  econ.get_stake(result.ledger, "node1", "validator") == 1000
+}
+
+test "lock stake fails with insufficient balance" {
+  let result = econ.lock_stake(econ.empty_ledger(), "node1", "validator", 1000) in
+  !result.ok
+}
+
+test "unlock stake returns balance" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 5000) in
+  let staked = econ.lock_stake(l, "node1", "validator", 1000) in
+  let unstaked = econ.unlock_stake(staked.ledger, "node1", "validator") in
+  unstaked.ok && econ.get_balance(unstaked.ledger, "node1") == 5000
+}
+
+test "slash stake reduces stake and logs slash" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 5000) in
+  let staked = econ.lock_stake(l, "node1", "validator", 1000) in
+  let slashed = econ.slash_stake(staked.ledger, "node1", "validator", 200, "test slash") in
+  slashed.ok &&
+  econ.get_stake(slashed.ledger, "node1", "validator") == 800 &&
+  list.len(slashed.ledger.slash_log) == 1
+}
+
+test "archive staking requires minimum stake" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 5000) in
+  let result = econ.stake_as_archive(l, "node1") in
+  result.ok && econ.is_staked_archive(result.ledger, "node1")
+}
+
+test "archive slash reduces stake" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 5000) in
+  let staked = econ.stake_as_archive(l, "node1") in
+  let slashed = econ.slash_archive_node(staked.ledger, "node1", "econ.space:20549:ab") in
+  slashed.ok && slashed.slashed == econ.REPLICATION_SLASH
+}
+
+test "compute cost varies by exec kind" {
+  let expr_cost = econ.compute_cost("inline_expr", 0) in
+  let prog_cost = econ.compute_cost("fard_program", 0) in
+  prog_cost > expr_cost
+}
+
+test "charge compute deducts cost" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 1000) in
+  let result = econ.charge_compute(l, "node1", "inline_expr", 0) in
+  result.ok && econ.get_balance(result.ledger, "node1") < 1000
+}
+
+test "ledger summary counts nodes and totals" {
+  let l = econ.credit(econ.empty_ledger(), "node1", 500) in
+  let l2 = econ.credit(l, "node2", 300) in
+  let summary = econ.ledger_summary(l2) in
+  summary.node_count == 2 && summary.total_balance == 800
+}

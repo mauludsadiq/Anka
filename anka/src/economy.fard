@@ -1,0 +1,209 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("reputation") as rep
+
+// Economic security layer for ANKA.
+// In permissioned institutional meshes, Ed25519 identity + reputation is sufficient.
+// For open participation, stakes and slashing make misbehavior costly.
+//
+// Units: all values in integer "anks" (smallest unit, like satoshis).
+// No floating point — all arithmetic is integer.
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+let BASE_PUBLISH_COST   = 100   // anks per publish
+let BASE_WITNESS_REWARD = 10    // anks per valid witness
+let BASE_CHALLENGE_REWARD = 50  // anks per upheld challenge
+let LAZY_WITNESS_SLASH  = 20    // anks slashed for lazy witness
+let REPLICATION_STAKE   = 1000  // anks required to be an archive node
+let REPLICATION_SLASH   = 200   // anks slashed for dropping a shard
+let MIN_BALANCE         = 0     // floors at zero
+
+// ── Ledger ───────────────────────────────────────────────────────────────────
+
+fn empty_ledger() {
+  { balances: {}, stakes: {}, slash_log: [], reward_log: [] }
+}
+
+fn get_balance(ledger, node_id) {
+  rec.getOr(ledger.balances, node_id, 0)
+}
+
+fn set_balance(ledger, node_id, amount) {
+  let safe = if amount < MIN_BALANCE then MIN_BALANCE else amount in
+  { ...ledger, balances: rec.set(ledger.balances, node_id, safe) }
+}
+
+fn credit(ledger, node_id, amount) {
+  let current = get_balance(ledger, node_id) in
+  set_balance(ledger, node_id, current + amount)
+}
+
+fn debit(ledger, node_id, amount) {
+  let current = get_balance(ledger, node_id) in
+  set_balance(ledger, node_id, current - amount)
+}
+
+fn can_afford(ledger, node_id, amount) {
+  get_balance(ledger, node_id) >= amount
+}
+
+// ── Stakes ───────────────────────────────────────────────────────────────────
+
+fn get_stake(ledger, node_id, purpose) {
+  let key = str.concat([node_id, ":", purpose]) in
+  rec.getOr(ledger.stakes, key, 0)
+}
+
+fn lock_stake(ledger, node_id, purpose, amount) {
+  if !can_afford(ledger, node_id, amount) then
+    { ok: false, reason: "insufficient balance", ledger: ledger }
+  else
+    let key = str.concat([node_id, ":", purpose]) in
+    let current_stake = get_stake(ledger, node_id, purpose) in
+    let next_stakes = rec.set(ledger.stakes, key, current_stake + amount) in
+    let next_ledger = debit({ ...ledger, stakes: next_stakes }, node_id, amount) in
+    { ok: true, ledger: next_ledger, staked: amount }
+}
+
+fn unlock_stake(ledger, node_id, purpose) {
+  let key = str.concat([node_id, ":", purpose]) in
+  let staked = get_stake(ledger, node_id, purpose) in
+  if staked == 0 then
+    { ok: false, reason: "no stake found", ledger: ledger }
+  else
+    let next_stakes = rec.set(ledger.stakes, key, 0) in
+    let next_ledger = credit({ ...ledger, stakes: next_stakes }, node_id, staked) in
+    { ok: true, ledger: next_ledger, returned: staked }
+}
+
+fn slash_stake(ledger, node_id, purpose, amount, reason) {
+  let key = str.concat([node_id, ":", purpose]) in
+  let staked = get_stake(ledger, node_id, purpose) in
+  let slash_amount = if amount > staked then staked else amount in
+  let next_stakes = rec.set(ledger.stakes, key, staked - slash_amount) in
+  let slash_event = { node_id: node_id, purpose: purpose, amount: slash_amount, reason: reason } in
+  let next_slash_log = list.append(ledger.slash_log, slash_event) in
+  { ok: true, ledger: { ...ledger, stakes: next_stakes, slash_log: next_slash_log }, slashed: slash_amount }
+}
+
+// ── Publish costs ────────────────────────────────────────────────────────────
+
+fn publish_cost(claim_space, evidence_ref_count) {
+  BASE_PUBLISH_COST + evidence_ref_count * 10
+}
+
+fn charge_publish(ledger, node_id, claim_space, evidence_ref_count) {
+  let cost = publish_cost(claim_space, evidence_ref_count) in
+  if !can_afford(ledger, node_id, cost) then
+    { ok: false, reason: "insufficient balance for publish", cost: cost, ledger: ledger }
+  else
+    let next = debit(ledger, node_id, cost) in
+    let reward_event = { node_id: node_id, kind: "publish_charge", amount: cost, claim_space: claim_space } in
+    { ok: true, ledger: { ...next, reward_log: list.append(next.reward_log, reward_event) }, cost: cost }
+}
+
+// ── Witness rewards and slashing ─────────────────────────────────────────────
+
+fn reward_witness(ledger, node_id, claim_space, digest_hex) {
+  let next = credit(ledger, node_id, BASE_WITNESS_REWARD) in
+  let reward_event = { node_id: node_id, kind: "witness_reward", amount: BASE_WITNESS_REWARD, claim_space: claim_space, digest_hex: digest_hex } in
+  { ok: true, ledger: { ...next, reward_log: list.append(next.reward_log, reward_event) }, reward: BASE_WITNESS_REWARD }
+}
+
+fn slash_lazy_witness(ledger, node_id, claim_space, digest_hex) {
+  let slash_result = slash_stake(ledger, node_id, "validator", LAZY_WITNESS_SLASH, str.concat(["lazy witness: ", digest_hex])) in
+  if slash_result.slashed == 0 then
+    let next = debit(slash_result.ledger, node_id, LAZY_WITNESS_SLASH) in
+    { ok: true, ledger: next, slashed: LAZY_WITNESS_SLASH }
+  else
+    { ok: true, ledger: slash_result.ledger, slashed: slash_result.slashed }
+}
+
+fn reward_challenge(ledger, challenger_id, claim_space, digest_hex) {
+  let next = credit(ledger, challenger_id, BASE_CHALLENGE_REWARD) in
+  let reward_event = { node_id: challenger_id, kind: "challenge_reward", amount: BASE_CHALLENGE_REWARD, claim_space: claim_space, digest_hex: digest_hex } in
+  { ok: true, ledger: { ...next, reward_log: list.append(next.reward_log, reward_event) }, reward: BASE_CHALLENGE_REWARD }
+}
+
+// ── Replication stakes ───────────────────────────────────────────────────────
+
+fn stake_as_archive(ledger, node_id) {
+  lock_stake(ledger, node_id, "archive", REPLICATION_STAKE)
+}
+
+fn unstake_archive(ledger, node_id) {
+  unlock_stake(ledger, node_id, "archive")
+}
+
+fn slash_archive_node(ledger, node_id, shard_key) {
+  slash_stake(ledger, node_id, "archive", REPLICATION_SLASH, str.concat(["dropped shard: ", shard_key]))
+}
+
+fn is_staked_archive(ledger, node_id) {
+  get_stake(ledger, node_id, "archive") >= REPLICATION_STAKE
+}
+
+// ── Validator stakes ─────────────────────────────────────────────────────────
+
+fn stake_as_validator(ledger, node_id, amount) {
+  lock_stake(ledger, node_id, "validator", amount)
+}
+
+fn unstake_validator(ledger, node_id) {
+  unlock_stake(ledger, node_id, "validator")
+}
+
+fn validator_stake(ledger, node_id) {
+  get_stake(ledger, node_id, "validator")
+}
+
+// ── Compute costs (ExecClaims) ───────────────────────────────────────────────
+
+fn compute_cost(exec_kind, input_count) {
+  let base = if exec_kind == "inline_expr" then 50
+    else if exec_kind == "fard_program" then 200
+    else if exec_kind == "source_ref" then 150
+    else 100
+  in
+  base + input_count * 20
+}
+
+fn charge_compute(ledger, node_id, exec_kind, input_count) {
+  let cost = compute_cost(exec_kind, input_count) in
+  if !can_afford(ledger, node_id, cost) then
+    { ok: false, reason: "insufficient balance for compute", cost: cost, ledger: ledger }
+  else
+    let next = debit(ledger, node_id, cost) in
+    let reward_event = { node_id: node_id, kind: "compute_charge", amount: cost, exec_kind: exec_kind } in
+    { ok: true, ledger: { ...next, reward_log: list.append(next.reward_log, reward_event) }, cost: cost }
+}
+
+// ── Ledger summary ───────────────────────────────────────────────────────────
+
+fn ledger_summary(ledger) {
+  let node_ids = rec.keys(ledger.balances) in
+  {
+    node_count: list.len(node_ids),
+    total_balance: list.fold(node_ids, 0, fn(acc, id) { acc + get_balance(ledger, id) }),
+    slash_count: list.len(ledger.slash_log),
+    reward_count: list.len(ledger.reward_log),
+    total_slashed: list.fold(ledger.slash_log, 0, fn(acc, e) { acc + e.amount }),
+    total_rewarded: list.fold(ledger.reward_log, 0, fn(acc, e) { acc + e.amount })
+  }
+}
+
+export {
+  empty_ledger, get_balance, credit, debit, can_afford,
+  get_stake, lock_stake, unlock_stake, slash_stake,
+  publish_cost, charge_publish,
+  reward_witness, slash_lazy_witness, reward_challenge,
+  stake_as_archive, unstake_archive, slash_archive_node, is_staked_archive,
+  stake_as_validator, unstake_validator, validator_stake,
+  compute_cost, charge_compute,
+  ledger_summary,
+  BASE_PUBLISH_COST, BASE_WITNESS_REWARD, BASE_CHALLENGE_REWARD,
+  LAZY_WITNESS_SLASH, REPLICATION_STAKE, REPLICATION_SLASH
+}
