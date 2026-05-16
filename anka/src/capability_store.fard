@@ -1,0 +1,131 @@
+import("std/str") as str
+import("std/rec") as rec
+import("std/list") as list
+import("std/json") as json
+import("std/hash") as hash
+import("std/crypto") as crypto
+import("keypair") as kp
+
+// ANKA Capability Store
+// Wraps Bay2 capability primitives for ANKA's specific access model.
+//
+// Capability structure in ANKA:
+//   issuer_node_id:  the node granting the capability (origin or admin node)
+//   holder_node_id:  the node receiving the capability
+//   claim_space:     the claim space this capability covers ("*" for all)
+//   rights:          ["publish"] | ["witness"] | ["challenge"] | ["admin"]
+//   expires_unix_secs: 0 = never expires
+//   nonce:           unique per issuance
+//
+// The origin node is the root of trust — it can issue capabilities to any node.
+// Validators can issue witness/challenge capabilities but not publish capabilities.
+// No ambient authority — if no capability exists, the operation is denied.
+
+fn make_capability(issuer_node_id, holder_node_id, claim_space, rights, expires_unix_secs, nonce) {
+  {
+    issuer_node_id: issuer_node_id,
+    holder_node_id: holder_node_id,
+    claim_space: claim_space,
+    rights: rights,
+    expires_unix_secs: expires_unix_secs,
+    nonce: nonce
+  }
+}
+
+fn capability_digest(cap) {
+  hash.sha256_text(json.canonicalize({
+    issuer_node_id: cap.issuer_node_id,
+    holder_node_id: cap.holder_node_id,
+    claim_space: cap.claim_space,
+    rights: cap.rights,
+    expires_unix_secs: cap.expires_unix_secs,
+    nonce: cap.nonce
+  }))
+}
+
+fn sign_capability(cap, issuer_private_key_hex) {
+  let digest = capability_digest(cap) in
+  let raw = kp.strip_prefix(digest) in
+  let sig = kp.sign(issuer_private_key_hex, raw) in
+  { capability: cap, digest_hex: digest, signature_hex: sig }
+}
+
+fn verify_capability(envelope, issuer_public_key_hex) {
+  let digest_ok = capability_digest(envelope.capability) == envelope.digest_hex in
+  let sig_ok = if digest_ok then
+    let raw = kp.strip_prefix(envelope.digest_hex) in
+    kp.verify(issuer_public_key_hex, raw, envelope.signature_hex)
+  else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn has_right(cap, right) {
+  list.any(cap.rights, fn(r) { r == right || r == "admin" })
+}
+
+fn claim_space_matches(cap_space, requested_space) {
+  cap_space == "*" || cap_space == requested_space
+}
+
+fn is_valid_for(cap, holder_node_id, claim_space, right, now_unix_secs) {
+  (cap.holder_node_id == "*" || cap.holder_node_id == holder_node_id) &&
+  claim_space_matches(cap.claim_space, claim_space) &&
+  has_right(cap, right) &&
+  (cap.expires_unix_secs == 0 || cap.expires_unix_secs > now_unix_secs)
+}
+
+fn empty_capability_store() {
+  { capabilities: {}, revoked: [], cap_index: [] }
+}
+
+fn store_capability(cap_store, envelope) {
+  let digest = envelope.digest_hex in
+  if list.any(cap_store.cap_index, fn(d) { d == digest }) then
+    { store: cap_store, stored: false }
+  else
+    let next_caps = rec.set(cap_store.capabilities, digest, envelope) in
+    let next_index = list.append(cap_store.cap_index, digest) in
+    { store: { capabilities: next_caps, revoked: cap_store.revoked, cap_index: next_index }, stored: true }
+}
+
+fn revoke_capability(cap_store, digest_hex) {
+  if list.any(cap_store.revoked, fn(d) { d == digest_hex }) then cap_store
+  else { ...cap_store, revoked: list.append(cap_store.revoked, digest_hex) }
+}
+
+fn is_revoked(cap_store, digest_hex) {
+  list.any(cap_store.revoked, fn(d) { d == digest_hex })
+}
+
+fn check_capability(cap_store, holder_node_id, claim_space, right, now_unix_secs) {
+  let matching = list.filter(cap_store.cap_index, fn(digest) {
+    if is_revoked(cap_store, digest) then false
+    else
+      let env = rec.get(cap_store.capabilities, digest) in
+      is_valid_for(env.capability, holder_node_id, claim_space, right, now_unix_secs)
+  }) in
+  if list.len(matching) > 0 then
+    { allowed: true, matched_digest: list.head(matching) }
+  else
+    { allowed: false, matched_digest: null, reason: str.concat(["no capability for ", right, " on ", claim_space]) }
+}
+
+fn grant_open_publish(cap_store, issuer_node_id, issuer_private_key_hex, now_unix_secs) {
+  let cap = make_capability(issuer_node_id, "*", "*", ["publish", "witness", "challenge"], 0, str.from(now_unix_secs)) in
+  let envelope = sign_capability(cap, issuer_private_key_hex) in
+  let result = store_capability(cap_store, envelope) in
+  { store: result.store, envelope: envelope }
+}
+
+fn capability_count(cap_store) {
+  list.len(cap_store.cap_index)
+}
+
+fn capabilities_for(cap_store, holder_node_id) {
+  list.filter(cap_store.cap_index, fn(digest) {
+    let env = rec.get(cap_store.capabilities, digest) in
+    env.capability.holder_node_id == holder_node_id || env.capability.holder_node_id == "*"
+  })
+}
+
+export { make_capability, capability_digest, sign_capability, verify_capability, has_right, claim_space_matches, is_valid_for, empty_capability_store, store_capability, revoke_capability, is_revoked, check_capability, grant_open_publish, capability_count, capabilities_for }

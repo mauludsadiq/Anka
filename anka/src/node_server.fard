@@ -14,12 +14,14 @@ import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
 import("bay2_store") as b2
+import("capability_store") as caps
 import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
 import("claim_set") as cset
 import("bay2_store") as b2
+import("capability_store") as caps
 import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
@@ -110,6 +112,12 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
       error_response(state, peers, local_address, registry, subscriptions, arc, 429, "rate limit exceeded: publish")
     else
     let body = json.decode(req.body) in
+    let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    let cap_check = if caps.capability_count(cap_store) == 0 then { allowed: true }
+      else caps.check_capability(cap_store, state.node_id, body.claim_space, "publish", now) in
+    if !cap_check.allowed then
+      error_response(state, peers, local_address, registry, subscriptions, arc, 403, str.concat(["capability required: ", body.claim_space]))
+    else
     let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
     let _ = dialer.broadcast_gossip(peers, pub.gossip, local_address) in
     let arc2 = arch.record_claim_trail(arc, pub.envelope.digest_hex, "published", { issuer: state.node_id, claim_space: body.claim_space }, body.timestamp_unix_secs) in
@@ -167,6 +175,15 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     let body = json.decode(req.body) in
     let next_peers = if list.any(peers, fn(p) { p == body.address }) then peers else list.append(peers, body.address) in
     json_response(state, next_peers, local_address, registry, subscriptions, arc, { ok: true, peer_count: list.len(next_peers), address: body.address })
+  else if req.path == "/capability" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    let result = caps.store_capability(cap_store, body.envelope) in
+    let next_state = rec.set(state, "capability_store", result.store) in
+    json_response(next_state, peers, local_address, registry, subscriptions, arc, { ok: true, stored: result.stored, count: caps.capability_count(result.store) })
+  else if req.path == "/capabilities" && req.method == "GET" then
+    let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, count: caps.capability_count(cap_store), open: caps.capability_count(cap_store) == 0 })
   else if req.path == "/peers" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, peers: peers })
   else if str.starts_with(req.path, "/graph/claim/") && req.method == "GET" then

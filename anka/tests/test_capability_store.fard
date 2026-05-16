@@ -1,0 +1,102 @@
+import("../src/capability_store") as caps
+import("../src/keypair") as kp
+import("std/list") as list
+import("std/str") as str
+
+let kp1 = kp.generate_keypair("issuer-seed-001")
+let kp2 = kp.generate_keypair("holder-seed-002")
+
+test "capability digest is stable" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  caps.capability_digest(cap) == caps.capability_digest(cap)
+}
+
+test "capability signs and verifies" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let report = caps.verify_capability(env, kp1.public_key_hex) in
+  report.valid
+}
+
+test "tampered capability fails verification" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let bad_cap = { ...cap, claim_space: "econ.space" } in
+  let bad_env = { ...env, capability: bad_cap } in
+  let report = caps.verify_capability(bad_env, kp1.public_key_hex) in
+  !report.valid
+}
+
+test "has right returns true for matching right" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "*", ["publish", "witness"], 0, "n1") in
+  caps.has_right(cap, "publish") && caps.has_right(cap, "witness")
+}
+
+test "admin right grants all rights" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "*", ["admin"], 0, "n1") in
+  caps.has_right(cap, "publish") && caps.has_right(cap, "witness") && caps.has_right(cap, "challenge")
+}
+
+test "wildcard claim space matches any space" {
+  caps.claim_space_matches("*", "research.result.claims") &&
+  caps.claim_space_matches("*", "anka.interpretive.econ")
+}
+
+test "specific claim space does not match other spaces" {
+  caps.claim_space_matches("research.result.claims", "research.result.claims") &&
+  !caps.claim_space_matches("research.result.claims", "anka.interpretive.econ")
+}
+
+test "is valid for checks all conditions" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  caps.is_valid_for(cap, kp2.node_id, "research.result.claims", "publish", 1000) &&
+  !caps.is_valid_for(cap, kp1.node_id, "research.result.claims", "publish", 1000)
+}
+
+test "expired capability is invalid" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "*", ["publish"], 500, "n1") in
+  !caps.is_valid_for(cap, kp2.node_id, "research.result.claims", "publish", 1000)
+}
+
+test "capability store starts empty" {
+  let s = caps.empty_capability_store() in
+  caps.capability_count(s) == 0
+}
+
+test "store capability increments count" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "*", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let result = caps.store_capability(caps.empty_capability_store(), env) in
+  caps.capability_count(result.store) == 1
+}
+
+test "check capability allows valid holder" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let result = caps.store_capability(caps.empty_capability_store(), env) in
+  let check = caps.check_capability(result.store, kp2.node_id, "research.result.claims", "publish", 1000) in
+  check.allowed
+}
+
+test "check capability denies wrong holder" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "research.result.claims", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let result = caps.store_capability(caps.empty_capability_store(), env) in
+  let check = caps.check_capability(result.store, kp1.node_id, "research.result.claims", "publish", 1000) in
+  !check.allowed
+}
+
+test "revoke blocks previously valid capability" {
+  let cap = caps.make_capability(kp1.node_id, kp2.node_id, "*", ["publish"], 0, "n1") in
+  let env = caps.sign_capability(cap, kp1.private_key_hex) in
+  let result = caps.store_capability(caps.empty_capability_store(), env) in
+  let revoked = caps.revoke_capability(result.store, env.digest_hex) in
+  let check = caps.check_capability(revoked, kp2.node_id, "research.result.claims", "publish", 1000) in
+  !check.allowed
+}
+
+test "grant open publish allows any node on any space" {
+  let result = caps.grant_open_publish(caps.empty_capability_store(), kp1.node_id, kp1.private_key_hex, 1000) in
+  let check = caps.check_capability(result.store, "any-node", "any-space", "publish", 2000) in
+  check.allowed
+}
