@@ -1,0 +1,99 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("shard") as shard
+import("scoped_gossip") as sg
+
+// Shard-bounded gossip — nodes subscribe to specific shards, not global state.
+// A shard subscription is: { spaces: [...], shards: [...shard_key_prefixes...] }
+//
+// Shard prefix matching:
+//   "econ.space:*"         — all shards in econ.space
+//   "econ.space:20549:*"   — all digest ranges for econ.space on day 20549
+//   "econ.space:20549:ab"  — only digest range "ab" for econ.space on day 20549
+//
+// A node with no shard subscriptions falls back to space-level filtering.
+// A node with shard subscriptions only receives digests in matching shards.
+
+fn shard_sub_empty() {
+  { spaces: [], shards: [] }
+}
+
+fn shard_sub_add_space(sub, claim_space) {
+  let next = sg.subscription_add({ spaces: sub.spaces, spaces: sub.spaces }, claim_space) in
+  { ...sub, spaces: next.spaces }
+}
+
+fn shard_sub_add_shard(sub, shard_key_prefix) {
+  if list.any(sub.shards, fn(s) { s == shard_key_prefix }) then sub
+  else { ...sub, shards: list.append(sub.shards, shard_key_prefix) }
+}
+
+fn shard_sub_all() {
+  { spaces: ["*"], shards: [] }
+}
+
+fn shard_key_matches_prefix(sk, prefix) {
+  if str.ends_with(prefix, "*") then
+    let p = str.slice(prefix, 0, str.len(prefix) - 1) in
+    str.starts_with(sk, p)
+  else
+    sk == prefix
+}
+
+fn shard_sub_matches(sub, envelope) {
+  let claim_space = envelope.claim.claim_space in
+  let sk = shard.shard_key_from_envelope(envelope) in
+  let space_match = list.any(sub.spaces, fn(s) { s == "*" || s == claim_space }) in
+  if !space_match then false
+  else if list.len(sub.shards) == 0 then true
+  else list.any(sub.shards, fn(prefix) { shard_key_matches_prefix(sk, prefix) })
+}
+
+fn filter_digests_by_shard_sub(digests, claims, sub) {
+  list.filter(digests, fn(d) {
+    let env = rec.getOr(claims, d, null) in
+    if env == null then false
+    else shard_sub_matches(sub, env)
+  })
+}
+
+fn shard_scoped_sync_plan(from_store, to_known_digests, sub) {
+  let all_digests = shard.all_digests(from_store) in
+  let subscribed = list.filter(all_digests, fn(d) {
+    let env = shard.get_claim(from_store, d) in
+    if env == null then false
+    else shard_sub_matches(sub, env)
+  }) in
+  let missing = list.filter(subscribed, fn(d) {
+    !list.any(to_known_digests, fn(x) { x == d })
+  }) in
+  { missing: missing, subscribed_count: list.len(subscribed), total_count: list.len(all_digests) }
+}
+
+fn shard_gossip_summary(store, subs) {
+  let all_digests = shard.all_digests(store) in
+  list.map(subs, fn(sub) {
+    let matching = list.filter(all_digests, fn(d) {
+      let env = shard.get_claim(store, d) in
+      if env == null then false
+      else shard_sub_matches(sub, env)
+    }) in
+    { spaces: sub.spaces, shards: sub.shards, matching_count: list.len(matching), total_count: list.len(all_digests) }
+  })
+}
+
+fn shard_bandwidth_reduction(store, sub) {
+  let total = list.len(shard.all_digests(store)) in
+  if total == 0 then { reduction_pct: 100, subscribed: 0, total: 0 }
+  else
+    let subscribed = list.len(list.filter(shard.all_digests(store), fn(d) {
+      let env = shard.get_claim(store, d) in
+      if env == null then false
+      else shard_sub_matches(sub, env)
+    })) in
+    let saved = total - subscribed in
+    { reduction_pct: saved * 100 / total, subscribed: subscribed, total: total }
+}
+
+export { shard_sub_empty, shard_sub_add_space, shard_sub_add_shard, shard_sub_all, shard_key_matches_prefix, shard_sub_matches, filter_digests_by_shard_sub, shard_scoped_sync_plan, shard_gossip_summary, shard_bandwidth_reduction }

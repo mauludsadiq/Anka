@@ -1,0 +1,103 @@
+import("../src/shard_gossip") as sg
+import("../src/shard") as shard
+import("../src/node") as node
+import("std/list") as list
+
+test "empty shard sub matches nothing without spaces" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let sub = sg.shard_sub_empty() in
+  !sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "wildcard shard sub matches all spaces" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let sub = sg.shard_sub_all() in
+  sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "space sub matches correct space" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let sub = sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space") in
+  sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "space sub excludes wrong space" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let sub = sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space") in
+  !sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "shard prefix wildcard matches all shards in space" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let sub = sg.shard_sub_add_shard(
+    sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space"),
+    "econ.space:*"
+  ) in
+  sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "shard prefix excludes non-matching shard" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let sub = sg.shard_sub_add_shard(
+    sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space"),
+    "econ.space:99999:zzzz"
+  ) in
+  !sg.shard_sub_matches(sub, pub.envelope)
+}
+
+test "shard sync plan identifies missing subscribed digests" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sub = sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space") in
+  let plan = sg.shard_scoped_sync_plan(store, [], sub) in
+  list.len(plan.missing) == 1 && plan.subscribed_count == 1
+}
+
+test "shard sync plan excludes out-of-subscription digests" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let store = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let sub = sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space") in
+  let plan = sg.shard_scoped_sync_plan(store, [], sub) in
+  plan.subscribed_count == 1 && plan.total_count == 2
+}
+
+test "bandwidth reduction shows savings for narrow subscription" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let store = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let sub = sg.shard_sub_add_space(sg.shard_sub_empty(), "econ.space") in
+  let report = sg.shard_bandwidth_reduction(store, sub) in
+  report.reduction_pct == 50 && report.subscribed == 1 && report.total == 2
+}
+
+test "no reduction for wildcard subscription" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let store = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let sub = sg.shard_sub_all() in
+  let report = sg.shard_bandwidth_reduction(store, sub) in
+  report.reduction_pct == 0 && report.total == 2
+}
+
+test "shard key prefix matching is exact without wildcard" {
+  sg.shard_key_matches_prefix("econ.space:20549:abcd", "econ.space:20549:abcd") &&
+  !sg.shard_key_matches_prefix("econ.space:20549:abcd", "econ.space:20549:abce")
+}
+
+test "shard key prefix matching with wildcard matches prefix" {
+  sg.shard_key_matches_prefix("econ.space:20549:abcd", "econ.space:20549:*") &&
+  sg.shard_key_matches_prefix("econ.space:20549:ffff", "econ.space:20549:*") &&
+  !sg.shard_key_matches_prefix("science.space:20549:abcd", "econ.space:20549:*")
+}
