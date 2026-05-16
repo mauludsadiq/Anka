@@ -1,0 +1,6 @@
+# ANKA is a Fard project
+*.fard linguist-language=Fard
+*.py linguist-documentation=true
+*.sh linguist-documentation=true
+Dockerfile linguist-documentation=true
+docker-compose.yml linguist-documentation=true
