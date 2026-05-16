@@ -1,0 +1,106 @@
+import("../src/bay2_store") as b2
+import("../src/node") as node
+import("std/list") as list
+import("std/rec") as rec
+
+test "bay2 store starts empty" {
+  let s = b2.empty_bay2_store() in
+  b2.claim_count(s) == 0 && b2.witness_count(s) == 0 && b2.challenge_count(s) == 0
+}
+
+test "store claim increments count" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  b2.claim_count(s) == 1
+}
+
+test "has claim returns true after store" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  b2.has_claim(s, pub.envelope.digest_hex)
+}
+
+test "get claim returns envelope" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  let env = b2.get_claim(s, pub.envelope.digest_hex) in
+  env != null && env.digest_hex == pub.envelope.digest_hex
+}
+
+test "duplicate store does not increment count" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  let s2 = b2.store_claim(s, pub.envelope) in
+  b2.claim_count(s2) == 1
+}
+
+test "known digests returns all stored digests" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let p2 = node.publish(n, "reproducibility.results", "s2", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.store_claim(b2.empty_bay2_store(), p1.envelope), p2.envelope) in
+  list.len(b2.known_digests(s)) == 2
+}
+
+test "claims by space filters correctly" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let p2 = node.publish(n, "reproducibility.results", "s2", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.store_claim(b2.empty_bay2_store(), p1.envelope), p2.envelope) in
+  let research = b2.claims_by_space(s, "research.result.claims") in
+  list.len(research) == 1
+}
+
+test "claims by subject filters correctly" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "climate-2026", "p", "o1", [], 1775710900) in
+  let p2 = node.publish(n, "research.result.claims", "gdp-2026", "p", "o2", [], 1775710900) in
+  let s = b2.store_claim(b2.store_claim(b2.empty_bay2_store(), p1.envelope), p2.envelope) in
+  let results = b2.claims_by_subject(s, "research.result.claims", "climate-2026") in
+  list.len(results) == 1
+}
+
+test "store witness increments witness count" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  let w = { digest_hex: pub.envelope.digest_hex, witness_node_id: n.node_id, validation_type: "structural", timestamp_unix_secs: 1775710910 } in
+  let s2 = b2.store_witness(s, w) in
+  b2.witness_count(s2) == 1
+}
+
+test "record op increments op count" {
+  let s = b2.empty_bay2_store() in
+  let s2 = b2.record_op(s, "anka.published", { claim_space: "research.result.claims" }, "node:1", 1775710900) in
+  b2.op_count(s2) == 1
+}
+
+test "replay ops returns ops in order" {
+  let s = b2.empty_bay2_store() in
+  let s2 = b2.record_op(s, "anka.published", { n: 1 }, "node:1", 1000) in
+  let s3 = b2.record_op(s2, "anka.witnessed", { n: 2 }, "node:2", 1001) in
+  let ops = b2.replay_ops(s3) in
+  list.len(ops) == 2 && list.get(ops, 0).kind == "anka.published"
+}
+
+test "to node state claims produces compatible map" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let s = b2.store_claim(b2.empty_bay2_store(), pub.envelope) in
+  let claims_map = b2.to_node_state_claims(s) in
+  rec.has(claims_map, pub.envelope.digest_hex)
+}
+
+test "merge stores combines claims without duplicates" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let p2 = node.publish(n, "research.result.claims", "s2", "p", "o", [], 1775710900) in
+  let s1 = b2.store_claim(b2.empty_bay2_store(), p1.envelope) in
+  let s2 = b2.store_claim(b2.empty_bay2_store(), p2.envelope) in
+  let merged = b2.merge_stores(s1, s2) in
+  b2.claim_count(merged) == 2
+}

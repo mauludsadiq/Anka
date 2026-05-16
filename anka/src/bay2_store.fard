@@ -1,0 +1,187 @@
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+import("std/json") as json
+import("std/hash") as hash
+
+// ANKA-Bay2 Store Adapter
+// Wraps Bay2 primitives to present the same interface as the flat node state.
+// Allows gradual migration — node_server.fard does not need to change.
+//
+// Replaces:
+//   state.claims        -> bay2_store.object_store (Bay2 objects)
+//   state.witnesses     -> bay2_store.witness_index (Bay2 objects)
+//   state.challenges    -> bay2_store.challenge_index (Bay2 objects)
+//   archive trails      -> bay2_store.op_log (Bay2 replay log)
+//   known_digests       -> bay2_store.monotone_index
+
+fn empty_bay2_store() {
+  {
+    object_store: { objects: {}, index: [] },
+    witness_index: {},
+    challenge_index: {},
+    op_log: { operations: {}, head: "sha256:0000000000000000000000000000000000000000000000000000000000000000", op_index: [], entry_count: 0 },
+    mono_index: { kind_index: {}, author_index: {}, time_index: {}, tag_index: {}, entry_count: 0 },
+    pubsub: { subscriptions: {}, subscriber_index: [] }
+  }
+}
+
+fn object_digest(obj) {
+  hash.sha256_text(json.canonicalize(obj))
+}
+
+fn store_claim(bay2_store, envelope) {
+  let digest = envelope.digest_hex in
+  let bay2_obj = {
+    kind: "anka.claim",
+    payload: envelope,
+    author_id: envelope.claim.issuer_node_id,
+    timestamp_unix_secs: envelope.claim.timestamp_unix_secs
+  } in
+  let obj_store = bay2_store.object_store in
+  let next_objects = rec.set(obj_store.objects, digest, bay2_obj) in
+  let next_index = if list.any(obj_store.index, fn(d) { d == digest }) then
+    obj_store.index
+  else list.append(obj_store.index, digest) in
+  let next_obj_store = { objects: next_objects, index: next_index } in
+  let mono = bay2_store.mono_index in
+  let bucket = str.from(envelope.claim.timestamp_unix_secs / 86400) in
+  let next_kind = rec.set(mono.kind_index, "anka.claim",
+    list.dedupe(list.append(rec.getOr(mono.kind_index, "anka.claim", []), digest))) in
+  let next_author = rec.set(mono.author_index, envelope.claim.issuer_node_id,
+    list.dedupe(list.append(rec.getOr(mono.author_index, envelope.claim.issuer_node_id, []), digest))) in
+  let next_time = rec.set(mono.time_index, bucket,
+    list.dedupe(list.append(rec.getOr(mono.time_index, bucket, []), digest))) in
+  let next_tag = rec.set(mono.tag_index, envelope.claim.claim_space,
+    list.dedupe(list.append(rec.getOr(mono.tag_index, envelope.claim.claim_space, []), digest))) in
+  let next_mono = { ...mono, kind_index: next_kind, author_index: next_author, time_index: next_time, tag_index: next_tag, entry_count: mono.entry_count + 1 } in
+  { ...bay2_store, object_store: next_obj_store, mono_index: next_mono }
+}
+
+fn get_claim(bay2_store, digest) {
+  let obj = rec.getOr(bay2_store.object_store.objects, digest, null) in
+  if obj == null then null else obj.payload
+}
+
+fn has_claim(bay2_store, digest) {
+  rec.has(bay2_store.object_store.objects, digest)
+}
+
+fn all_claims_map(bay2_store) {
+  list.fold(bay2_store.object_store.index, {}, fn(acc, digest) {
+    let obj = rec.get(bay2_store.object_store.objects, digest) in
+    rec.set(acc, digest, obj.payload)
+  })
+}
+
+fn store_witness(bay2_store, witness) {
+  let digest = witness.digest_hex in
+  { ...bay2_store, witness_index: rec.set(bay2_store.witness_index, digest, witness) }
+}
+
+fn all_witnesses_map(bay2_store) {
+  bay2_store.witness_index
+}
+
+fn store_challenge(bay2_store, challenge) {
+  let digest = challenge.target_digest_hex in
+  { ...bay2_store, challenge_index: rec.set(bay2_store.challenge_index, digest, challenge) }
+}
+
+fn all_challenges_map(bay2_store) {
+  bay2_store.challenge_index
+}
+
+fn record_op(bay2_store, kind, payload, author_id, timestamp_unix_secs) {
+  let log = bay2_store.op_log in
+  let op = {
+    kind: kind,
+    payload: payload,
+    author_id: author_id,
+    parent_op_digest: log.head,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  let op_digest = hash.sha256_text(json.canonicalize(op)) in
+  let next_ops = rec.set(log.operations, op_digest, op) in
+  let next_index = list.append(log.op_index, op_digest) in
+  let next_log = { operations: next_ops, head: op_digest, op_index: next_index, entry_count: log.entry_count + 1 } in
+  { ...bay2_store, op_log: next_log }
+}
+
+fn replay_ops(bay2_store) {
+  list.map(bay2_store.op_log.op_index, fn(digest) {
+    rec.get(bay2_store.op_log.operations, digest)
+  })
+}
+
+fn known_digests(bay2_store) {
+  bay2_store.object_store.index
+}
+
+fn claim_count(bay2_store) {
+  list.len(bay2_store.object_store.index)
+}
+
+fn witness_count(bay2_store) {
+  list.len(rec.keys(bay2_store.witness_index))
+}
+
+fn challenge_count(bay2_store) {
+  list.len(rec.keys(bay2_store.challenge_index))
+}
+
+fn op_count(bay2_store) {
+  bay2_store.op_log.entry_count
+}
+
+fn claims_by_space(bay2_store, claim_space) {
+  let tag_digests = rec.getOr(bay2_store.mono_index.tag_index, claim_space, []) in
+  list.map(tag_digests, fn(digest) {
+    let obj = rec.get(bay2_store.object_store.objects, digest) in
+    obj.payload
+  })
+}
+
+fn claims_by_subject(bay2_store, claim_space, subject) {
+  let space_claims = claims_by_space(bay2_store, claim_space) in
+  list.filter(space_claims, fn(env) { env.claim.subject == subject })
+}
+
+fn merge_stores(a, b) {
+  let b_digests = b.object_store.index in
+  let merged = list.fold(b_digests, a, fn(acc, digest) {
+    if has_claim(acc, digest) then acc
+    else
+      let obj = rec.get(b.object_store.objects, digest) in
+      store_claim(acc, obj.payload)
+  }) in
+  let merged_witnesses = list.fold(rec.keys(b.witness_index), merged, fn(acc, k) {
+    let w = rec.get(b.witness_index, k) in
+    store_witness(acc, w)
+  }) in
+  let merged_challenges = list.fold(rec.keys(b.challenge_index), merged_witnesses, fn(acc, k) {
+    let c = rec.get(b.challenge_index, k) in
+    store_challenge(acc, c)
+  }) in
+  merged_challenges
+}
+
+fn to_node_state_claims(bay2_store) {
+  all_claims_map(bay2_store)
+}
+
+fn to_node_state_witnesses(bay2_store) {
+  all_witnesses_map(bay2_store)
+}
+
+fn to_node_state_challenges(bay2_store) {
+  all_challenges_map(bay2_store)
+}
+
+export {
+  empty_bay2_store, store_claim, get_claim, has_claim, all_claims_map,
+  store_witness, all_witnesses_map, store_challenge, all_challenges_map,
+  record_op, replay_ops, known_digests, claim_count, witness_count,
+  challenge_count, op_count, claims_by_space, claims_by_subject,
+  merge_stores, to_node_state_claims, to_node_state_witnesses, to_node_state_challenges
+}
