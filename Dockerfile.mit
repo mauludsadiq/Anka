@@ -10,9 +10,9 @@ COPY anka/ anka/
 
 RUN mkdir -p out/node
 
-EXPOSE 18080
+EXPOSE 18081
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=5 --start-period=10s \
-  CMD curl -f http://localhost:18080/health || exit 1
+  CMD curl -f http://localhost:18081/health || exit 1
 
-CMD ["fardrun", "run", "--program", "anka/src/node_process.fard", "--out", "out/node"]
+CMD ["fardrun", "run", "--program", "anka/src/node_process_b.fard", "--out", "out/node"]
