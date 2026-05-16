@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-262%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-4%2C602-blue)
+![Tests](https://img.shields.io/badge/tests-275%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-4%2C809-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -72,7 +72,7 @@ These are not features. They are web primitives — the minimum set required for
 
 **Substrate layer — complete and tested.**
 
-262 tests passing across 35 test files. 4,602 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
+275 tests passing across 36 test files. 4,809 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
 **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention. No central coordinator.
 
@@ -305,7 +305,7 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 
 ## What Is Not Built Yet
 
-**Bay2 integration.** The ANKA-Bay2 bridge specification is complete and verified with 14 tests. The next step is wiring ANKA's node processes to use Bay2 as the underlying storage and transport layer, replacing the current SQLite-backed flat store with Bay2's sharded object store and causal streams.
+**Bay2 integration — live.** The ANKA-Bay2 bridge is implemented and running. Every claim published to an ANKA node is simultaneously written to a Bay2 object store, indexed in a monotone index by kind/author/time/claim_space, and recorded as a signed operation in a Bay2 replay log. The bay2_store is persisted to SQLite alongside the existing flat state. Witnesses are also shadow-written to the Bay2 store. The full epistemic history of any node is now replayable from the Bay2 operation log.
 
 **First production deployment.** The protocol is ready. The mesh has been tested across five nodes on one machine. The economic layer is implemented. What remains is running it between two institutions on separate machines, with real operators, real claim spaces, and real stakes.
 
