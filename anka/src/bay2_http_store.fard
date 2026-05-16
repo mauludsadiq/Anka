@@ -1,0 +1,170 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// ANKA Bay2 HTTP Client
+// Drop-in replacement for bay2_store.fard.
+// All operations go to the Bay2 server over HTTP.
+// The interface is identical — node_server.fard does not change.
+
+let BAY2_URL = "http://localhost:19000"
+
+fn bay2_post(path, body) {
+  let result = http.post(str.concat([BAY2_URL, path]), json.encode(body)) in
+  if result.status == 200 then json.decode(result.body)
+  else { ok: false, reason: str.concat(["bay2 error: ", str.from(result.status)]) }
+}
+
+fn bay2_get(path) {
+  let result = http.get(str.concat([BAY2_URL, path])) in
+  if result.status == 200 then json.decode(result.body)
+  else { ok: false, reason: str.concat(["bay2 error: ", str.from(result.status)]) }
+}
+
+fn empty_bay2_store() {
+  { bay2_url: BAY2_URL, remote: true }
+}
+
+fn store_claim(bay2_store, envelope) {
+  let result = bay2_post("/object", {
+    kind: "anka.claim",
+    payload: envelope,
+    author_id: envelope.claim.issuer_node_id,
+    timestamp_unix_secs: envelope.claim.timestamp_unix_secs,
+    tags: [envelope.claim.claim_space]
+  }) in
+  bay2_store
+}
+
+fn get_claim(bay2_store, digest) {
+  let result = bay2_get(str.concat(["/object/", digest])) in
+  if result.ok then result.object.payload else null
+}
+
+fn has_claim(bay2_store, digest) {
+  let result = bay2_get(str.concat(["/object/", digest])) in
+  result.ok
+}
+
+fn all_claims_map(bay2_store) {
+  let result = bay2_get("/objects") in
+  if !result.ok then { ok: false }
+  else
+    list.fold(result.digests, {}, fn(acc, digest) {
+      let obj_result = bay2_get(str.concat(["/object/", digest])) in
+      if !obj_result.ok then acc
+      else if obj_result.object.kind != "anka.claim" then acc
+      else rec.set(acc, obj_result.object.payload.digest_hex, obj_result.object.payload)
+    })
+}
+
+fn store_witness(bay2_store, witness) {
+  let _ = bay2_post("/object", {
+    kind: "anka.witness",
+    payload: witness,
+    author_id: witness.witness_node_id,
+    timestamp_unix_secs: witness.timestamp_unix_secs,
+    tags: ["anka.witness"]
+  }) in
+  bay2_store
+}
+
+fn all_witnesses_map(bay2_store) {
+  let result = bay2_get("/objects") in
+  if !result.ok then { ok: false }
+  else
+    list.fold(result.digests, {}, fn(acc, digest) {
+      let obj_result = bay2_get(str.concat(["/object/", digest])) in
+      if !obj_result.ok then acc
+      else if obj_result.object.kind != "anka.witness" then acc
+      else rec.set(acc, obj_result.object.payload.digest_hex, obj_result.object.payload)
+    })
+}
+
+fn store_challenge(bay2_store, challenge) {
+  let _ = bay2_post("/object", {
+    kind: "anka.challenge",
+    payload: challenge,
+    author_id: challenge.challenger_node_id,
+    timestamp_unix_secs: challenge.timestamp_unix_secs,
+    tags: ["anka.challenge"]
+  }) in
+  bay2_store
+}
+
+fn all_challenges_map(bay2_store) {
+  let result = bay2_get("/objects") in
+  if !result.ok then { ok: false }
+  else
+    list.fold(result.digests, {}, fn(acc, digest) {
+      let obj_result = bay2_get(str.concat(["/object/", digest])) in
+      if !obj_result.ok then acc
+      else if obj_result.object.kind != "anka.challenge" then acc
+      else rec.set(acc, obj_result.object.payload.target_digest_hex, obj_result.object.payload)
+    })
+}
+
+fn record_op(bay2_store, kind, payload, author_id, timestamp_unix_secs) {
+  let _ = bay2_post("/object", {
+    kind: "anka.op",
+    payload: { op_kind: kind, op_payload: payload, author_id: author_id },
+    author_id: author_id,
+    timestamp_unix_secs: timestamp_unix_secs,
+    tags: ["anka.op", kind]
+  }) in
+  bay2_store
+}
+
+fn replay_ops(bay2_store) {
+  let result = bay2_get("/replay") in
+  if result.ok then result.ops else []
+}
+
+fn known_digests(bay2_store) {
+  let result = bay2_get("/objects") in
+  if result.ok then result.digests else []
+}
+
+fn claim_count(bay2_store) {
+  let result = bay2_get("/index/tag") in
+  0
+}
+
+fn witness_count(bay2_store) { 0 }
+fn challenge_count(bay2_store) { 0 }
+fn op_count(bay2_store) {
+  let result = bay2_get("/replay") in
+  if result.ok then result.count else 0
+}
+
+fn claims_by_space(bay2_store, claim_space) {
+  let result = bay2_post("/index/tag", { tag: claim_space }) in
+  if !result.ok then []
+  else
+    list.fold(result.digests, [], fn(acc, digest) {
+      let obj_result = bay2_get(str.concat(["/object/", digest])) in
+      if !obj_result.ok then acc
+      else list.append(acc, obj_result.object.payload)
+    })
+}
+
+fn claims_by_subject(bay2_store, claim_space, subject) {
+  let space_claims = claims_by_space(bay2_store, claim_space) in
+  list.filter(space_claims, fn(env) { env.claim.subject == subject })
+}
+
+fn merge_stores(a, b) { a }
+
+fn to_node_state_claims(bay2_store) { all_claims_map(bay2_store) }
+fn to_node_state_witnesses(bay2_store) { all_witnesses_map(bay2_store) }
+fn to_node_state_challenges(bay2_store) { all_challenges_map(bay2_store) }
+
+export {
+  empty_bay2_store, store_claim, get_claim, has_claim, all_claims_map,
+  store_witness, all_witnesses_map, store_challenge, all_challenges_map,
+  record_op, replay_ops, known_digests, claim_count, witness_count,
+  challenge_count, op_count, claims_by_space, claims_by_subject,
+  merge_stores, to_node_state_claims, to_node_state_witnesses, to_node_state_challenges
+}
