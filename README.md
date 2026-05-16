@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C719-blue)
+![Tests](https://img.shields.io/badge/tests-200%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-3%2C897-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -58,7 +58,7 @@ These are not features. They are web primitives — the minimum set required for
 
 **Substrate layer — complete and tested.**
 
-187 tests passing across 29 test files. 3,719 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
+200 tests passing across 30 test files. 3,897 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
 **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention. No central coordinator.
 
@@ -290,6 +290,8 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 -----
 
 ## What Is Not Built Yet
+
+**Sharded claim storage.** Claims are partitioned by `claim_space`, daily time bucket, and digest prefix — the structural foundation for billion-claim scale. Nodes query by space or time bucket. Shards merge without duplicates. The shard key is stable and deterministic.
 
 **Economic security layer.** In a permissioned institutional mesh, Ed25519 identity declarations and reputation provide sufficient Sybil resistance. For open participation, staking and slashing are needed — publish stakes, witness stakes, challenge stakes. The reputation model is the foundation; token economics sit on top of it.
 
