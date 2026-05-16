@@ -1,0 +1,118 @@
+import("std/crypto") as crypto
+import("std/hash") as hash
+import("std/json") as json
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+import("std/datetime") as dt
+import("canonical") as canon
+import("keypair") as kp
+import("shard") as shard
+import("index") as idx
+
+// A checkpoint is a signed Merkle root over all digests in a shard.
+// Any node can verify the checkpoint without holding the full shard.
+// Checkpoints are emitted periodically per shard_key.
+
+fn compute_shard_root(store, shard_key) {
+  let shard_map = rec.getOr(store.shards, shard_key, {}) in
+  let digests = rec.keys(shard_map) in
+  if list.len(digests) == 0 then
+    { ok: false, root: null, digest_count: 0 }
+  else
+    let roots = list.map(digests, fn(d) {
+      let raw = str.slice(d, 7, str.len(d)) in
+      raw
+    }) in
+    { ok: true, root: crypto.merkle_root(roots), digest_count: list.len(digests) }
+}
+
+fn make_checkpoint(shard_key, merkle_root, digest_count, issuer_node_id, timestamp_unix_secs) {
+  {
+    shard_key: shard_key,
+    merkle_root: merkle_root,
+    digest_count: digest_count,
+    issuer_node_id: issuer_node_id,
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn checkpoint_digest(checkpoint) {
+  canon.digest_text(json.canonicalize({
+    shard_key: checkpoint.shard_key,
+    merkle_root: checkpoint.merkle_root,
+    digest_count: checkpoint.digest_count,
+    issuer_node_id: checkpoint.issuer_node_id,
+    timestamp_unix_secs: checkpoint.timestamp_unix_secs
+  }))
+}
+
+fn sign_checkpoint(checkpoint, private_key_hex) {
+  let digest_hex = checkpoint_digest(checkpoint) in
+  let raw = kp.strip_prefix(digest_hex) in
+  let sig = kp.sign(private_key_hex, raw) in
+  {
+    checkpoint: checkpoint,
+    digest_hex: digest_hex,
+    signature_hex: sig
+  }
+}
+
+fn verify_checkpoint(envelope, issuer_public_key_hex) {
+  let digest_ok = checkpoint_digest(envelope.checkpoint) == envelope.digest_hex in
+  let sig_ok = if digest_ok then
+    let raw = kp.strip_prefix(envelope.digest_hex) in
+    kp.verify(issuer_public_key_hex, raw, envelope.signature_hex)
+  else false in
+  { valid: digest_ok && sig_ok, digest_ok: digest_ok, signature_ok: sig_ok }
+}
+
+fn emit_checkpoint(store, shard_key, node_id, private_key_hex, timestamp_unix_secs) {
+  let root_result = compute_shard_root(store, shard_key) in
+  if !root_result.ok then
+    { ok: false, reason: "empty shard" }
+  else
+    let cp = make_checkpoint(shard_key, root_result.root, root_result.digest_count, node_id, timestamp_unix_secs) in
+    let envelope = sign_checkpoint(cp, private_key_hex) in
+    { ok: true, envelope: envelope, shard_key: shard_key, merkle_root: root_result.root }
+}
+
+fn emit_all_checkpoints(store, node_id, private_key_hex, timestamp_unix_secs) {
+  list.map(store.shard_index, fn(sk) {
+    emit_checkpoint(store, sk, node_id, private_key_hex, timestamp_unix_secs)
+  })
+}
+
+fn verify_shard_against_checkpoint(store, envelope, issuer_public_key_hex) {
+  let sig_valid = verify_checkpoint(envelope, issuer_public_key_hex) in
+  if !sig_valid.valid then
+    { ok: false, reason: "invalid checkpoint signature" }
+  else
+    let sk = envelope.checkpoint.shard_key in
+    let root_result = compute_shard_root(store, sk) in
+    if !root_result.ok then
+      { ok: false, reason: "shard is empty" }
+    else if root_result.root != envelope.checkpoint.merkle_root then
+      { ok: false, reason: "merkle root mismatch", local_root: root_result.root, checkpoint_root: envelope.checkpoint.merkle_root }
+    else
+      { ok: true, shard_key: sk, merkle_root: root_result.root, digest_count: root_result.digest_count }
+}
+
+fn empty_checkpoint_store() {
+  { checkpoints: {} }
+}
+
+fn store_checkpoint(cp_store, envelope) {
+  let sk = envelope.checkpoint.shard_key in
+  { checkpoints: rec.set(cp_store.checkpoints, sk, envelope) }
+}
+
+fn get_checkpoint(cp_store, shard_key) {
+  rec.getOr(cp_store.checkpoints, shard_key, null)
+}
+
+fn checkpoint_count(cp_store) {
+  list.len(rec.keys(cp_store.checkpoints))
+}
+
+export { compute_shard_root, make_checkpoint, checkpoint_digest, sign_checkpoint, verify_checkpoint, emit_checkpoint, emit_all_checkpoints, verify_shard_against_checkpoint, empty_checkpoint_store, store_checkpoint, get_checkpoint, checkpoint_count }

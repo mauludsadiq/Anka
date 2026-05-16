@@ -1,0 +1,101 @@
+import("../src/checkpoint") as cp
+import("../src/shard") as shard
+import("../src/node") as node
+import("std/list") as list
+import("std/str") as str
+
+test "checkpoint store starts empty" {
+  let s = cp.empty_checkpoint_store() in
+  cp.checkpoint_count(s) == 0
+}
+
+test "compute shard root returns ok for non-empty shard" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let result = cp.compute_shard_root(store, sk) in
+  result.ok && result.root != null && result.digest_count == 1
+}
+
+test "compute shard root returns not ok for empty shard" {
+  let store = shard.empty_store() in
+  let result = cp.compute_shard_root(store, "nonexistent:shard") in
+  !result.ok
+}
+
+test "checkpoint digest is stable" {
+  let checkpoint = cp.make_checkpoint("econ.space:20549:abcd", "sha256:abc", 1, "ed25519:node1", 1000) in
+  let d1 = cp.checkpoint_digest(checkpoint) in
+  let d2 = cp.checkpoint_digest(checkpoint) in
+  d1 == d2 && str.starts_with(d1, "sha256:")
+}
+
+test "checkpoint signs and verifies" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let result = cp.emit_checkpoint(store, sk, n.node_id, n.node_secret, 1775710999) in
+  let report = cp.verify_checkpoint(result.envelope, n.public_key_hex) in
+  result.ok && report.valid
+}
+
+test "tampered checkpoint fails verification" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let result = cp.emit_checkpoint(store, sk, n.node_id, n.node_secret, 1775710999) in
+  let bad_cp = { ...result.envelope.checkpoint, digest_count: 999 } in
+  let bad_env = { ...result.envelope, checkpoint: bad_cp } in
+  let report = cp.verify_checkpoint(bad_env, n.public_key_hex) in
+  !report.valid && !report.digest_ok
+}
+
+test "shard verification passes when merkle root matches" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let result = cp.emit_checkpoint(store, sk, n.node_id, n.node_secret, 1775710999) in
+  let verify = cp.verify_shard_against_checkpoint(store, result.envelope, n.public_key_hex) in
+  verify.ok && verify.merkle_root == result.merkle_root
+}
+
+test "shard verification fails after tampering with store" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store1 = shard.store_claim(shard.empty_store(), p1.envelope) in
+  let sk = shard.shard_key_from_envelope(p1.envelope) in
+  let result = cp.emit_checkpoint(store1, sk, n.node_id, n.node_secret, 1775710999) in
+  let p2 = node.publish(n, "econ.space", "GDP", "forecast", "9.9", [], 1775710900) in
+  let sk2 = shard.shard_key_from_envelope(p2.envelope) in
+  let same_shard = sk == sk2 in
+  if !same_shard then
+    true
+  else
+    let store2 = shard.store_claim(store1, p2.envelope) in
+    let verify = cp.verify_shard_against_checkpoint(store2, result.envelope, n.public_key_hex) in
+    !verify.ok
+}
+
+test "emit all checkpoints covers all shards" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let p2 = node.publish(n, "science.space", "CO2", "measure", "421", [], 1775710900) in
+  let store = shard.store_claim(shard.store_claim(shard.empty_store(), p1.envelope), p2.envelope) in
+  let results = cp.emit_all_checkpoints(store, n.node_id, n.node_secret, 1775710999) in
+  list.len(results) == 2 && list.all(results, fn(r) { r.ok })
+}
+
+test "store and retrieve checkpoint" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "econ.space", "GDP", "forecast", "2.3", [], 1775710900) in
+  let store = shard.store_claim(shard.empty_store(), pub.envelope) in
+  let sk = shard.shard_key_from_envelope(pub.envelope) in
+  let result = cp.emit_checkpoint(store, sk, n.node_id, n.node_secret, 1775710999) in
+  let cp_store = cp.store_checkpoint(cp.empty_checkpoint_store(), result.envelope) in
+  let retrieved = cp.get_checkpoint(cp_store, sk) in
+  cp.checkpoint_count(cp_store) == 1 && retrieved != null && retrieved.digest_hex == result.envelope.digest_hex
+}
