@@ -1,0 +1,77 @@
+import("../src/archive_seg") as aseg
+import("../src/node") as node
+import("../src/shard") as shard
+import("std/list") as list
+import("std/str") as str
+
+test "segmented archive starts empty" {
+  let a = aseg.empty_segmented_archive() in
+  a.total_events == 0 && aseg.segment_count(a) == 0
+}
+
+test "record event creates segment" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  aseg.segment_count(a) == 1 && a.total_events == 1
+}
+
+test "events in segment returns matching events" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let events = aseg.events_in_segment(a, "econ.space", 1775710900) in
+  list.len(events) == 1
+}
+
+test "events in space returns all space events" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "econ.space", "sha256:def", "witnessed", {}, 1775710900 + 86400) in
+  let events = aseg.events_in_space(a2, "econ.space") in
+  list.len(events) == 2
+}
+
+test "events for digest filters by digest" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "econ.space", "sha256:def", "published", {}, 1775710900) in
+  let events = aseg.events_for_digest(a2, "sha256:abc") in
+  list.len(events) == 1 && list.any(events, fn(e) { e.digest_hex == "sha256:abc" })
+}
+
+test "events in range filters by time window" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "econ.space", "sha256:def", "published", {}, 1775710900 + 86400 * 3) in
+  let events = aseg.events_in_range(a2, "econ.space", 1775710900, 1775710900 + 86400) in
+  list.len(events) == 1
+}
+
+test "different claim spaces go to different segments" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "science.space", "sha256:def", "published", {}, 1775710900) in
+  aseg.segment_count(a2) == 2
+}
+
+test "hot segments returns current day segments" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "econ.space", "sha256:def", "published", {}, 1775710900 + 86400 * 2) in
+  let hot = aseg.hot_segments(a2, 1775710900) in
+  list.len(hot) == 1
+}
+
+test "cold segments returns past day segments" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "econ.space", "sha256:def", "published", {}, 1775710900 + 86400 * 2) in
+  let cold = aseg.cold_segments(a2, 1775710900 + 86400 * 2) in
+  list.len(cold) == 1
+}
+
+test "merge archives combines events without duplicates" {
+  let a1 = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:def", "published", {}, 1775710900) in
+  let merged = aseg.merge_archives(a1, a2) in
+  let events = aseg.events_in_segment(merged, "econ.space", 1775710900) in
+  list.len(events) == 2
+}
+
+test "segment summary shows per segment event counts" {
+  let a = aseg.record_event(aseg.empty_segmented_archive(), "econ.space", "sha256:abc", "published", {}, 1775710900) in
+  let a2 = aseg.record_event(a, "science.space", "sha256:def", "witnessed", {}, 1775710900) in
+  let summary = aseg.segment_summary(a2) in
+  list.len(summary) == 2 && list.all(summary, fn(s) { s.event_count == 1 })
+}

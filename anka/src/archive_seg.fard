@@ -1,0 +1,184 @@
+import("std/str") as str
+import("std/int") as int
+import("std/result") as result
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("shard") as shard
+import("archive") as arch
+
+// Segmented archive — append-only logs partitioned by claim_space and day bucket.
+// Each segment key: {claim_space}:{day_bucket}
+// Each segment: ordered list of archive events
+//
+// Hot segment: current day — events appended here
+// Cold segments: previous days — immutable, queryable by range
+//
+// This gives O(1) append, O(segments_in_range) range query,
+// and bounded memory per segment.
+
+fn empty_segmented_archive() {
+  {
+    segments: {},
+    segment_index: [],
+    total_events: 0,
+    snapshots: [],
+    registry_versions: {},
+    receipt_log: []
+  }
+}
+
+fn segment_key(claim_space, timestamp_unix_secs) {
+  let bucket = shard.time_bucket(timestamp_unix_secs) in
+  str.concat([claim_space, ":", str.from(bucket)])
+}
+
+fn append_to_segment(seg_archive, claim_space, timestamp_unix_secs, event) {
+  let sk = segment_key(claim_space, timestamp_unix_secs) in
+  let segment = rec.getOr(seg_archive.segments, sk, []) in
+  let next_segment = list.append(segment, event) in
+  let next_segments = rec.set(seg_archive.segments, sk, next_segment) in
+  let next_index = if list.any(seg_archive.segment_index, fn(k) { k == sk }) then
+    seg_archive.segment_index
+  else
+    list.append(seg_archive.segment_index, sk)
+  in
+  {
+    ...seg_archive,
+    segments: next_segments,
+    segment_index: next_index,
+    total_events: seg_archive.total_events + 1
+  }
+}
+
+fn record_event(seg_archive, claim_space, digest_hex, event_kind, event_data, timestamp_unix_secs) {
+  let event = {
+    digest_hex: digest_hex,
+    event_kind: event_kind,
+    event_data: event_data,
+    timestamp_unix_secs: timestamp_unix_secs
+  } in
+  append_to_segment(seg_archive, claim_space, timestamp_unix_secs, event)
+}
+
+fn events_in_segment(seg_archive, claim_space, timestamp_unix_secs) {
+  let sk = segment_key(claim_space, timestamp_unix_secs) in
+  rec.getOr(seg_archive.segments, sk, [])
+}
+
+fn events_in_space(seg_archive, claim_space) {
+  let prefix = str.concat([claim_space, ":"]) in
+  let matching = list.filter(seg_archive.segment_index, fn(k) {
+    str.starts_with(k, prefix)
+  }) in
+  list.fold(matching, [], fn(acc, sk) {
+    let events = rec.getOr(seg_archive.segments, sk, []) in
+    list.concat([acc, events])
+  })
+}
+
+fn events_for_digest(seg_archive, digest_hex) {
+  list.fold(seg_archive.segment_index, [], fn(acc, sk) {
+    let events = rec.getOr(seg_archive.segments, sk, []) in
+    let matching = list.filter(events, fn(e) { e.digest_hex == digest_hex }) in
+    list.concat([acc, matching])
+  })
+}
+
+fn events_in_range(seg_archive, claim_space, from_ts, to_ts) {
+  let from_bucket = shard.time_bucket(from_ts) in
+  let to_bucket = shard.time_bucket(to_ts) in
+  let prefix = str.concat([claim_space, ":"]) in
+  let matching = list.filter(seg_archive.segment_index, fn(sk) {
+    if !str.starts_with(sk, prefix) then false
+    else
+      let parts = str.split(sk, ":") in
+      let bucket_str = list.get(parts, 1) in
+      let bucket = result.unwrap_or(int.parse(bucket_str), -1) in
+      bucket >= from_bucket && bucket <= to_bucket
+  }) in
+  list.fold(matching, [], fn(acc, sk) {
+    let events = rec.getOr(seg_archive.segments, sk, []) in
+    let in_range = list.filter(events, fn(e) {
+      e.timestamp_unix_secs >= from_ts && e.timestamp_unix_secs <= to_ts
+    }) in
+    list.concat([acc, in_range])
+  })
+}
+
+fn store_snapshot(seg_archive, node, label, timestamp_unix_secs) {
+  let snap = arch.store_snapshot(
+    { snapshots: seg_archive.snapshots, registry_versions: {}, claim_trails: {}, receipt_log: [] },
+    node, label, timestamp_unix_secs
+  ) in
+  { ...seg_archive, snapshots: list.append(seg_archive.snapshots, { label: label, timestamp_unix_secs: timestamp_unix_secs }) }
+}
+
+fn store_registry_version(seg_archive, registry, timestamp_unix_secs) {
+  let key = registry.registry_digest_hex in
+  { ...seg_archive, registry_versions: rec.set(seg_archive.registry_versions, key, registry) }
+}
+
+fn log_receipt(seg_archive, receipt) {
+  { ...seg_archive, receipt_log: list.append(seg_archive.receipt_log, receipt) }
+}
+
+fn segment_count(seg_archive) {
+  list.len(seg_archive.segment_index)
+}
+
+fn segment_summary(seg_archive) {
+  list.map(seg_archive.segment_index, fn(sk) {
+    let events = rec.getOr(seg_archive.segments, sk, []) in
+    { segment_key: sk, event_count: list.len(events) }
+  })
+}
+
+fn hot_segments(seg_archive, current_timestamp_unix_secs) {
+  let current_bucket = shard.time_bucket(current_timestamp_unix_secs) in
+  list.filter(seg_archive.segment_index, fn(sk) {
+    let parts = str.split(sk, ":") in
+    if list.len(parts) < 2 then false
+    else
+      let bucket_str = list.get(parts, list.len(parts) - 1) in
+      let bucket = result.unwrap_or(int.parse(bucket_str), -1) in
+      bucket == current_bucket
+  })
+}
+
+fn cold_segments(seg_archive, current_timestamp_unix_secs) {
+  let current_bucket = shard.time_bucket(current_timestamp_unix_secs) in
+  list.filter(seg_archive.segment_index, fn(sk) {
+    let parts = str.split(sk, ":") in
+    if list.len(parts) < 2 then false
+    else
+      let bucket_str = list.get(parts, list.len(parts) - 1) in
+      let bucket = result.unwrap_or(int.parse(bucket_str), -1) in
+      bucket < current_bucket
+  })
+}
+
+fn merge_archives(a, b) {
+  let merged_segments = list.fold(b.segment_index, a, fn(acc, sk) {
+    let b_events = rec.getOr(b.segments, sk, []) in
+    let a_events = rec.getOr(acc.segments, sk, []) in
+    let new_events = list.filter(b_events, fn(be) {
+      !list.any(a_events, fn(ae) {
+        ae.digest_hex == be.digest_hex && ae.event_kind == be.event_kind && ae.timestamp_unix_secs == be.timestamp_unix_secs
+      })
+    }) in
+    if list.len(new_events) == 0 then acc
+    else
+      let next_seg = list.concat([a_events, new_events]) in
+      let next_segments = rec.set(acc.segments, sk, next_seg) in
+      let next_index = if list.any(acc.segment_index, fn(k) { k == sk }) then
+        acc.segment_index
+      else
+        list.append(acc.segment_index, sk)
+      in
+      { ...acc, segments: next_segments, segment_index: next_index, total_events: acc.total_events + list.len(new_events) }
+  }) in
+  merged_segments
+}
+
+export { empty_segmented_archive, segment_key, append_to_segment, record_event, events_in_segment, events_in_space, events_for_digest, events_in_range, store_snapshot, store_registry_version, log_receipt, segment_count, segment_summary, hot_segments, cold_segments, merge_archives }
