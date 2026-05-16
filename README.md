@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-209%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-3%2C992-blue)
+![Tests](https://img.shields.io/badge/tests-219%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-4%2C110-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -58,7 +58,7 @@ These are not features. They are web primitives — the minimum set required for
 
 **Substrate layer — complete and tested.**
 
-209 tests passing across 31 test files. 3,992 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
+219 tests passing across 32 test files. 4,110 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
 **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention. No central coordinator.
 
@@ -292,6 +292,8 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 ## What Is Not Built Yet
 
 **Sharded claim storage.** Claims are partitioned by `claim_space`, daily time bucket, and digest prefix — the structural foundation for billion-claim scale. Nodes query by space or time bucket. Shards merge without duplicates. The shard key is stable and deterministic.
+
+**Merkle checkpoints.** Every shard emits a periodic signed Merkle root. Any node can verify shard integrity against a checkpoint without holding the full shard. Tamper detection is cryptographic — a single added or removed claim produces a different root. Checkpoints are signed with Ed25519 and verifiable by any peer.
 
 **Local indexes.** Four queryable indexes per node: digest → shard location, subject → digests, issuer → digests, time bucket → digests. Indexes merge without duplicates and support removal. O(1) digest lookup, O(claims in space) subject lookup.
 
