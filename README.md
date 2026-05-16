@@ -2,8 +2,8 @@
 
 **The interoperability substrate for AI-operated systems.**
 
-![Tests](https://img.shields.io/badge/tests-290%20passing-brightgreen)
-![Lines](https://img.shields.io/badge/lines-5%2C024-blue)
+![Tests](https://img.shields.io/badge/tests-301%20passing-brightgreen)
+![Lines](https://img.shields.io/badge/lines-5%2C324-blue)
 ![Language](https://img.shields.io/badge/language-Fard-purple)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -72,7 +72,7 @@ These are not features. They are web primitives — the minimum set required for
 
 **Substrate layer — complete and tested.**
 
-290 tests passing across 37 test files. 5,024 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
+301 tests passing across 38 test files. 5,324 lines of Fard. The following properties are verified in live multi-process tests, not simulations:
 
 **5-node full mesh convergence.** One published claim propagates automatically to all five nodes via gossip, fetch, verify, and witness. 5/5 nodes converge. 4/5 issue structural witnesses. No manual intervention. No central coordinator.
 
@@ -304,6 +304,8 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 -----
 
 ## What Is Not Built Yet
+
+**Cross-node materialized views.** A view node (port 18085) maintains a live projection of all claims across the mesh. It registers peers, pulls claims via /sync, and serves fast queries by claim space and subject without hitting individual nodes. Collapse and scoring work across the full projection. Persistent across restarts via SQLite.
 
 **Capability-scoped access.** Nodes operate in open mode (no capabilities required) or locked mode (capabilities required per claim space). Capabilities are signed Ed25519 bearer tokens issued by a trusted node, scoped to specific claim spaces and rights (publish/witness/challenge/admin). Capabilities can be revoked. When locked, publish to an unauthorized claim space returns 403. The origin node is the root of trust.
 
