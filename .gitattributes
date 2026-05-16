@@ -1,6 +1,9 @@
-# ANKA is a Fard project
-*.fard linguist-language=Fard
-*.py linguist-documentation=true
-*.sh linguist-documentation=true
-Dockerfile linguist-documentation=true
-docker-compose.yml linguist-documentation=true
+# Python SDK and scripts are support tooling, not the primary codebase
+anka_sdk/**/*.py linguist-vendored=true
+docker-demo.sh linguist-vendored=true
+demo.sh linguist-vendored=true
+Dockerfile linguist-vendored=true
+docker-compose.yml linguist-vendored=true
+
+# Fard source files — primary language
+*.fard linguist-detectable=true linguist-language=Fard
