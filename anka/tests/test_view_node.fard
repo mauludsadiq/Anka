@@ -1,0 +1,101 @@
+import("../src/view_node") as vn
+import("../src/node") as node
+import("../src/reputation") as rep
+import("std/list") as list
+import("std/rec") as rec
+
+test "view state starts empty" {
+  let vs = vn.empty_view_state() in
+  vs.ingested_count == 0
+}
+
+test "ingest envelope adds to claim index" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "3.2C", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let result = vn.ingest_envelope(vs, pub.envelope) in
+  result.ingested && result.view_state.ingested_count == 1
+}
+
+test "duplicate ingest is deduplicated" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "3.2C", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r1 = vn.ingest_envelope(vs, pub.envelope) in
+  let r2 = vn.ingest_envelope(r1.view_state, pub.envelope) in
+  !r2.ingested && r2.view_state.ingested_count == 1
+}
+
+test "query view returns matching claims" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "climate-2026", "p", "3.2C", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r = vn.ingest_envelope(vs, pub.envelope) in
+  let result = vn.query_view(r.view_state, "research.result.claims", "climate-2026", rep.empty()) in
+  result.ok && result.claim_count == 1
+}
+
+test "query view returns not ok for missing subject" {
+  let vs = vn.empty_view_state() in
+  let result = vn.query_view(vs, "research.result.claims", "nonexistent", rep.empty()) in
+  !result.ok
+}
+
+test "query view aggregates multiple claims for same subject" {
+  let n1 = node.new_node("node1") in
+  let n2 = node.new_node("node2") in
+  let p1 = node.publish(n1, "research.result.claims", "climate-2026", "p", "3.2C", [], 1775710900) in
+  let p2 = node.publish(n2, "research.result.claims", "climate-2026", "p", "3.4C", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r1 = vn.ingest_envelope(vs, p1.envelope) in
+  let r2 = vn.ingest_envelope(r1.view_state, p2.envelope) in
+  let result = vn.query_view(r2.view_state, "research.result.claims", "climate-2026", rep.empty()) in
+  result.ok && result.claim_count == 2
+}
+
+test "claims in space returns all claims for space" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "s1", "p", "o1", [], 1775710900) in
+  let p2 = node.publish(n, "research.result.claims", "s2", "p", "o2", [], 1775710900) in
+  let p3 = node.publish(n, "reproducibility.results", "s1", "p", "o3", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r1 = vn.ingest_envelope(vs, p1.envelope) in
+  let r2 = vn.ingest_envelope(r1.view_state, p2.envelope) in
+  let r3 = vn.ingest_envelope(r2.view_state, p3.envelope) in
+  let research = vn.claims_in_space(r3.view_state, "research.result.claims") in
+  list.len(research) == 2
+}
+
+test "ingest witness adds to witness index" {
+  let n = node.new_node("test") in
+  let pub = node.publish(n, "research.result.claims", "s1", "p", "o", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r = vn.ingest_envelope(vs, pub.envelope) in
+  let w = { digest_hex: pub.envelope.digest_hex, witness_node_id: n.node_id, validation_type: "structural", timestamp_unix_secs: 1775710910 } in
+  let vs2 = vn.ingest_witness(r.view_state, w) in
+  let witnesses = rec.getOr(vs2.witness_index, pub.envelope.digest_hex, []) in
+  list.len(witnesses) == 1
+}
+
+test "view summary shows correct counts" {
+  let n = node.new_node("test") in
+  let p1 = node.publish(n, "research.result.claims", "s1", "p", "o1", [], 1775710900) in
+  let p2 = node.publish(n, "research.result.claims", "s2", "p", "o2", [], 1775710900) in
+  let vs = vn.empty_view_state() in
+  let r1 = vn.ingest_envelope(vs, p1.envelope) in
+  let r2 = vn.ingest_envelope(r1.view_state, p2.envelope) in
+  let summary = vn.view_summary(r2.view_state) in
+  summary.ingested_count == 2 && summary.subject_count == 2
+}
+
+test "space subject key is stable" {
+  let k1 = vn.space_subject_key("research.result.claims", "climate-2026") in
+  let k2 = vn.space_subject_key("research.result.claims", "climate-2026") in
+  k1 == k2
+}
+
+test "different subjects produce different keys" {
+  let k1 = vn.space_subject_key("research.result.claims", "climate-2026") in
+  let k2 = vn.space_subject_key("research.result.claims", "gdp-2026") in
+  k1 != k2
+}

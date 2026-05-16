@@ -1,0 +1,154 @@
+import("std/str") as str
+import("std/rec") as rec
+import("std/list") as list
+import("std/json") as json
+import("std/hash") as hash
+import("std/http") as http
+import("weighted_collapse") as wc
+import("reputation") as rep
+
+// ANKA View Node
+// A materialized projection of claims across the mesh.
+// The view node subscribes to peer nodes, pulls all claims,
+// and maintains pre-built indexes for fast query without mesh scanning.
+//
+// View node state:
+//   claim_index:    claim_space -> subject -> [envelope]
+//   witness_index:  digest_hex -> [witness]
+//   peer_cursors:   peer_address -> last_known_digest_count
+//   space_registry: known claim spaces with policies
+
+fn empty_view_state() {
+  {
+    claim_index: {},
+    witness_index: {},
+    digest_set: {},
+    peer_cursors: {},
+    ingested_count: 0,
+    last_updated: 0
+  }
+}
+
+fn space_subject_key(claim_space, subject) {
+  str.concat([claim_space, "|", subject])
+}
+
+fn ingest_envelope(view_state, envelope) {
+  let digest = envelope.digest_hex in
+  if rec.has(view_state.digest_set, digest) then
+    { view_state: view_state, ingested: false }
+  else
+    let claim = envelope.claim in
+    let sk = space_subject_key(claim.claim_space, claim.subject) in
+    let existing = rec.getOr(view_state.claim_index, sk, []) in
+    let already_there = list.any(existing, fn(e) { e.digest_hex == digest }) in
+    let next_claim_index = if already_there then view_state.claim_index
+      else rec.set(view_state.claim_index, sk, list.append(existing, envelope)) in
+    let next_digest_set = rec.set(view_state.digest_set, digest, true) in
+    {
+      view_state: {
+        ...view_state,
+        claim_index: next_claim_index,
+        digest_set: next_digest_set,
+        ingested_count: view_state.ingested_count + 1
+      },
+      ingested: true
+    }
+}
+
+fn ingest_witness(view_state, witness) {
+  let digest = witness.digest_hex in
+  let existing = rec.getOr(view_state.witness_index, digest, []) in
+  let already_there = list.any(existing, fn(w) { w.witness_node_id == witness.witness_node_id }) in
+  if already_there then view_state
+  else
+    { ...view_state, witness_index: rec.set(view_state.witness_index, digest, list.append(existing, witness)) }
+}
+
+fn query_view(view_state, claim_space, subject, rep_state) {
+  let sk = space_subject_key(claim_space, subject) in
+  let envelopes = rec.getOr(view_state.claim_index, sk, []) in
+  if list.len(envelopes) == 0 then
+    { ok: false, reason: "no claims found", claim_space: claim_space, subject: subject }
+  else
+    let all_witnesses = list.fold(rec.keys(view_state.witness_index), [], fn(acc, digest) {
+      list.concat([acc, rec.get(view_state.witness_index, digest)])
+    }) in
+    let claim_digests = list.map(envelopes, fn(e) { e.digest_hex }) in
+    let claim_set = { claim_digests: claim_digests, claim_space: claim_space } in
+    let collapse_result = wc.collapse(claim_set, all_witnesses, rep_state, "single-winner") in
+    let plural_result = wc.collapse(claim_set, all_witnesses, rep_state, "plural") in
+    let winner = if collapse_result.winner_digest_hex != null then
+      list.find(envelopes, fn(e) { e.digest_hex == collapse_result.winner_digest_hex })
+    else { some: null } in
+    {
+      ok: true,
+      claim_space: claim_space,
+      subject: subject,
+      claim_count: list.len(envelopes),
+      single_winner: {
+        winner_digest_hex: collapse_result.winner_digest_hex,
+        winner_score: collapse_result.winner_score,
+        winner_value: if winner.some != null then winner.some.claim.object else null
+      },
+      plural: plural_result.scores,
+      all_claims: list.map(envelopes, fn(e) { {
+        digest_hex: e.digest_hex,
+        object: e.claim.object,
+        issuer: e.claim.issuer_node_id,
+        timestamp: e.claim.timestamp_unix_secs
+      }})
+    }
+}
+
+fn claims_in_space(view_state, claim_space) {
+  let prefix = str.concat([claim_space, "|"]) in
+  let matching_keys = list.filter(rec.keys(view_state.claim_index), fn(k) {
+    str.starts_with(k, prefix)
+  }) in
+  list.fold(matching_keys, [], fn(acc, k) {
+    list.concat([acc, rec.get(view_state.claim_index, k)])
+  })
+}
+
+fn pull_from_peer(view_state, peer_address) {
+  let known_result = http.get(str.concat([peer_address, "/known"])) in
+  if known_result.status != 200 then
+    { view_state: view_state, pulled: 0, errors: 1 }
+  else
+    let known = json.decode(known_result.body) in
+    let digests = rec.getOr(known, "known_digests", []) in
+    let new_digests = list.filter(digests, fn(d) {
+      !rec.has(view_state.digest_set, d)
+    }) in
+    let result = list.fold(new_digests, { vs: view_state, count: 0, errs: 0 }, fn(acc, digest) {
+      let fetch = http.get(str.concat([peer_address, "/claim/", digest])) in
+      if fetch.status != 200 then { ...acc, errs: acc.errs + 1 }
+      else
+        let body = json.decode(fetch.body) in
+        if !body.ok then { ...acc, errs: acc.errs + 1 }
+        else
+          let ing = ingest_envelope(acc.vs, body.envelope) in
+          { vs: ing.view_state, count: acc.count + 1, errs: acc.errs }
+    }) in
+    let next_cursors = rec.set(result.vs.peer_cursors, peer_address, list.len(digests)) in
+    { view_state: { ...result.vs, peer_cursors: next_cursors, last_updated: 0 }, pulled: result.count, errors: result.errs }
+}
+
+fn pull_from_all_peers(view_state, peer_addresses) {
+  list.fold(peer_addresses, { view_state: view_state, total_pulled: 0, total_errors: 0 }, fn(acc, peer) {
+    let result = pull_from_peer(acc.view_state, peer) in
+    { view_state: result.view_state, total_pulled: acc.total_pulled + result.pulled, total_errors: acc.total_errors + result.errors }
+  })
+}
+
+fn view_summary(view_state) {
+  {
+    ingested_count: view_state.ingested_count,
+    subject_count: list.len(rec.keys(view_state.claim_index)),
+    peer_count: list.len(rec.keys(view_state.peer_cursors)),
+    last_updated: view_state.last_updated
+  }
+}
+
+export { empty_view_state, ingest_envelope, ingest_witness, query_view, claims_in_space, pull_from_peer, pull_from_all_peers, view_summary, space_subject_key }

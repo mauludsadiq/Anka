@@ -1,0 +1,59 @@
+import("std/net") as net
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/http") as http
+import("std/sqlite") as sqlite
+import("view_node") as vn
+import("reputation") as rep
+
+let port = 18085
+let db_path = "file:out/view/anka_view.db?cache=shared&mode=rwc"
+let db = sqlite.open(db_path)
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+
+let _ = net.serve(port, fn(req) {
+  let vs_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'view_state'") in
+  let vs = if list.len(vs_rows) > 0 then json.decode(vs_rows[0].value) else vn.empty_view_state() in
+  let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'") in
+  let peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else [] in
+  let save_vs = fn(next_vs) { sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('view_state', '", json.encode(next_vs), "')"])) } in
+  let save_peers = fn(np) { sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(np), "')"])) } in
+  if req.path == "/health" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, kind: "view_node", ingested: vs.ingested_count, peers: list.len(peers) }), "content-type": "application/json" }
+  else if req.path == "/summary" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, summary: vn.view_summary(vs) }), "content-type": "application/json" }
+  else if req.path == "/peer" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let addr = body.address in
+    let next_peers = if list.any(peers, fn(p) { p == addr }) then peers else list.append(peers, addr) in
+    let _ = save_peers(next_peers) in
+    { status: 200, body: json.encode({ ok: true, peer_count: list.len(next_peers) }), "content-type": "application/json" }
+  else if req.path == "/peers" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, peers: peers }), "content-type": "application/json" }
+  else if req.path == "/sync" && req.method == "POST" then
+    let result = vn.pull_from_all_peers(vs, peers) in
+    let _ = save_vs(result.view_state) in
+    { status: 200, body: json.encode({ ok: true, pulled: result.total_pulled, errors: result.total_errors, ingested_count: result.view_state.ingested_count }), "content-type": "application/json" }
+  else if str.starts_with(req.path, "/query/") && req.method == "GET" then
+    let parts = str.split(str.slice(req.path, 7, str.len(req.path)), "/") in
+    if list.len(parts) < 2 then
+      { status: 400, body: json.encode({ ok: false, reason: "need /query/{space}/{subject}" }), "content-type": "application/json" }
+    else
+      let claim_space = list.get(parts, 0) in
+      let subject = list.get(parts, 1) in
+      let result = vn.query_view(vs, claim_space, subject, rep.empty()) in
+      { status: if result.ok then 200 else 404, body: json.encode(result), "content-type": "application/json" }
+  else if str.starts_with(req.path, "/space/") && req.method == "GET" then
+    let claim_space = str.slice(req.path, 7, str.len(req.path)) in
+    let claims = vn.claims_in_space(vs, claim_space) in
+    { status: 200, body: json.encode({ ok: true, claim_space: claim_space, count: list.len(claims), claims: list.map(claims, fn(e) { { digest_hex: e.digest_hex, subject: e.claim.subject, object: e.claim.object, issuer: e.claim.issuer_node_id } }) }), "content-type": "application/json" }
+  else if req.path == "/ingest" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let result = vn.ingest_envelope(vs, body.envelope) in
+    let _ = save_vs(result.view_state) in
+    { status: 200, body: json.encode({ ok: true, ingested: result.ingested, total: result.view_state.ingested_count }), "content-type": "application/json" }
+  else
+    { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), "content-type": "application/json" }
+})
