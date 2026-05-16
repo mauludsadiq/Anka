@@ -50,10 +50,32 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
   else if req.path == "/audit" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, snapshot_count: arch.snapshot_count(arc), receipt_count: list.len(arc.receipt_log) })
+  else if str.starts_with(req.path, "/audit/trail/local/") && req.method == "GET" then
+    let digest = str.slice(req.path, 19, str.len(req.path)) in
+    let history = arch.reconstruct_claim_history(arc, digest) in
+    json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, digest_hex: digest, history: history })
   else if str.starts_with(req.path, "/audit/trail/") && req.method == "GET" then
     let digest = str.slice(req.path, 13, str.len(req.path)) in
-    let history = arch.reconstruct_claim_history(arc, digest) in
-    json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, history: history })
+    let local_history = arch.reconstruct_claim_history(arc, digest) in
+    let peer_trail = list.fold(peers, [], fn(acc, peer_addr) {
+      let peer_resp = http.get(str.concat([peer_addr, "/audit/trail/local/", digest])) in
+      if peer_resp.status != 200 then acc
+      else
+        let pd = json.decode(peer_resp.body) in
+        if !pd.ok then acc
+        else
+          let pt = pd.history.trail in
+          let new_evs = list.filter(pt, fn(e) {
+            !list.any(acc, fn(a) { a.event_kind == e.event_kind && a.timestamp_unix_secs == e.timestamp_unix_secs })
+          }) in
+          list.concat([acc, new_evs])
+    }) in
+    let all_trail = list.concat([local_history.trail, peer_trail]) in
+    let wit_count = list.len(list.filter(all_trail, fn(e) { e.event_kind == "witnessed" })) in
+    let pub_count = list.len(list.filter(all_trail, fn(e) { e.event_kind == "published" })) in
+    let cha_count = list.len(list.filter(all_trail, fn(e) { e.event_kind == "challenged" })) in
+    let merged = { trail: all_trail, published_count: pub_count, witness_count: wit_count, challenge_count: cha_count, reconstructable: local_history.reconstructable } in
+    json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, digest_hex: digest, history: merged })
   else if req.path == "/subscriptions" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, subscriptions: subscriptions })
   else if req.path == "/subscribe" && req.method == "POST" then
