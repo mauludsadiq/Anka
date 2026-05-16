@@ -23,11 +23,11 @@ import("dashboard") as dashboard
 import("std/datetime") as dt
 
 fn json_response(state, peers, local_address, registry, subscriptions, arc, data) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: json.encode(data), content_type: "application/json" } }
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: json.encode(data), "content-type": "application/json" } }
 }
 
 fn error_response(state, peers, local_address, registry, subscriptions, arc, code, reason) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: code, body: json.encode({ ok: false, reason: reason }), content_type: "application/json" } }
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: code, body: json.encode({ ok: false, reason: reason }), "content-type": "application/json" } }
 }
 
 fn has_sender(body) {
@@ -137,8 +137,45 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     json_response(state, next_peers, local_address, registry, subscriptions, arc, { ok: true, peer_count: list.len(next_peers), address: body.address })
   else if req.path == "/peers" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, arc, { ok: true, peers: peers })
+  else if str.starts_with(req.path, "/graph/claim/") && req.method == "GET" then
+    let digest = str.slice(req.path, 13, str.len(req.path)) in
+    if !node.has_claim(state, digest) then
+      error_response(state, peers, local_address, registry, subscriptions, arc, 404, "claim not found")
+    else
+      let envelope = node.fetch_claim(state, digest) in
+      let all_witnesses = rec.keys(state.witnesses) in
+      let claim_witnesses = list.filter(all_witnesses, fn(k) {
+        rec.get(state.witnesses, k).digest_hex == digest
+      }) in
+      let witness_objects = list.map(claim_witnesses, fn(k) { rec.get(state.witnesses, k) }) in
+      let all_challenges = rec.keys(state.challenges) in
+      let claim_challenges = list.filter(all_challenges, fn(k) {
+        rec.get(state.challenges, k).target_digest_hex == digest
+      }) in
+      let challenge_objects = list.map(claim_challenges, fn(k) { rec.get(state.challenges, k) }) in
+      let trail_result = arch.reconstruct_claim_history(arc, digest) in
+      let same_subject = list.filter(rec.keys(state.claims), fn(k) {
+        let c = rec.get(state.claims, k) in
+        c.claim.subject == envelope.claim.subject &&
+        c.claim.claim_space == envelope.claim.claim_space &&
+        k != digest
+      }) in
+      json_response(state, peers, local_address, registry, subscriptions, arc, {
+        ok: true,
+        digest_hex: digest,
+        claim: envelope.claim,
+        issuer_node_id: envelope.claim.issuer_node_id,
+        witnesses: witness_objects,
+        witness_count: list.len(witness_objects),
+        challenges: challenge_objects,
+        challenge_count: list.len(challenge_objects),
+        competing_claims: same_subject,
+        competing_count: list.len(same_subject),
+        trail: trail_result,
+        signature_hex: envelope.issuer_signature_hex
+      })
   else if req.path == "/dashboard" && req.method == "GET" then
-    { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: dashboard.html(), content_type: "text/html" } }
+    { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: dashboard.html(), "content-type": "text/html" } }
   else if str.starts_with(req.path, "/query/") && req.method == "GET" then
     let parts = str.split(req.path, "/") in
     let claim_space = list.get(parts, 2) in
