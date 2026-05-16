@@ -21,6 +21,20 @@ ANKA is the substrate for that layer. Not a model. Not a platform. Not a chatbot
 
 -----
 
+## The Stack
+
+ANKA sits above Bay2 — the operational substrate for AI-operated systems.
+
+    Bay2          <- storage, streaming, capabilities, pubsub, replay, metering
+      |
+    ANKA          <- claims, witnesses, collapse, audit, reputation, coordination
+      |
+    AI systems    <- research meshes, scientific coordination, institutional trust
+
+Bay2 handles storage, transport, causal streaming, capabilities, materialized views, replication, policy enforcement, deterministic replay, and economic metering. ANKA handles epistemic coordination — claims, witnesses, challenges, collapse, audit, and institutional identity. Neither knows about the other's internals. A bridge module translates between them.
+
+Bay2 repo: https://github.com/mauludsadiq/Bay2
+
 ## The Problem
 
 When an AI system at Oxford produces a GDP forecast and passes it to an AI system at the Bank of England, what guarantees does the receiver have? Who signed it? Has anyone independently verified it? Has it been contested? Can the reasoning be replicated?
@@ -290,6 +304,8 @@ See `DEPLOYMENT.md` for TLS configuration, key management, and multi-institution
 -----
 
 ## What Is Not Built Yet
+
+**Bay2 integration.** The ANKA-Bay2 bridge specification is complete and verified with 14 tests. The next step is wiring ANKA's node processes to use Bay2 as the underlying storage and transport layer, replacing the current SQLite-backed flat store with Bay2's sharded object store and causal streams.
 
 **First production deployment.** The protocol is ready. The mesh has been tested across five nodes on one machine. The economic layer is implemented. What remains is running it between two institutions on separate machines, with real operators, real claim spaces, and real stakes.
 
