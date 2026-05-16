@@ -13,11 +13,13 @@ import("scoped_gossip") as sg
 import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
+import("bay2_store") as b2
 import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
 import("claim_set") as cset
+import("bay2_store") as b2
 import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
@@ -111,6 +113,10 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
     let _ = dialer.broadcast_gossip(peers, pub.gossip, local_address) in
     let arc2 = arch.record_claim_trail(arc, pub.envelope.digest_hex, "published", { issuer: state.node_id, claim_space: body.claim_space }, body.timestamp_unix_secs) in
+    let b2_state = rec.getOr(state, "bay2_store", b2.empty_bay2_store()) in
+    let b2_state = b2.store_claim(b2_state, pub.envelope) in
+    let b2_state = b2.record_op(b2_state, "anka.published", { claim_space: body.claim_space, issuer: state.node_id }, state.node_id, body.timestamp_unix_secs) in
+    let pub = { ...pub, node: { ...pub.node, bay2_store: b2_state } } in
     json_response(pub.node, peers, local_address, registry, subscriptions, arc2, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
   else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 7, str.len(req.path)) in
@@ -136,6 +142,10 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, req) {
     let result = pipeline.fetch_verify_witness(state, body.sender_address, body.digest_hex, state.node_secret, body.timestamp_unix_secs) in
     if result.ok then
       let arc2 = arch.record_claim_trail(arc, body.digest_hex, "witnessed", { witness: state.node_id, validation_type: "structural" }, body.timestamp_unix_secs) in
+      let b2_cur = rec.getOr(result.node, "bay2_store", b2.empty_bay2_store()) in
+      let b2_cur = if result.witness != null then b2.store_witness(b2_cur, result.witness) else b2_cur in
+      let b2_cur = b2.record_op(b2_cur, "anka.witnessed", { digest_hex: body.digest_hex, witness: state.node_id }, state.node_id, body.timestamp_unix_secs) in
+      let result = { ...result, node: { ...result.node, bay2_store: b2_cur } } in
       json_response(result.node, peers, local_address, registry, subscriptions, arc2, { ok: true, digest_hex: body.digest_hex, witnessed: true })
     else
       json_response(state, peers, local_address, registry, subscriptions, arc, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
