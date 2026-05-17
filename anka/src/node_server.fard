@@ -22,6 +22,7 @@ import("rate_limit") as rl
 import("inheritance") as inh
 import("dispute_resolution") as dr
 import("reputation") as rep
+import("longitudinal") as lon
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -33,6 +34,7 @@ import("rate_limit") as rl
 import("inheritance") as inh
 import("dispute_resolution") as dr
 import("reputation") as rep
+import("longitudinal") as lon
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -266,6 +268,24 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
     let next_state = rec.set(state, "capability_store", next_store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if str.starts_with(req.path, "/longitudinal/") && req.method == "GET" then
+    let rest = str.slice(req.path, 14, str.len(req.path)) in
+    let parts = str.split(rest, "/") in
+    let claim_space = list.head(parts) in
+    let subject = str.join(list.tail(parts), "/") in
+    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
+    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let all_challenges = list.map(rec.keys(state.challenges), fn(k) { rec.get(state.challenges, k) }) in
+    let trails = rec.getOr(arc, "claim_trails", {}) in
+    let analysis = lon.subject_analysis(claim_space, subject, all_envelopes, all_witnesses, all_challenges, trails, 86400) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, analysis: analysis })
+  else if req.path == "/longitudinal" && req.method == "GET" then
+    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
+    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let all_challenges = list.map(rec.keys(state.challenges), fn(k) { rec.get(state.challenges, k) }) in
+    let trails = rec.getOr(arc, "claim_trails", {}) in
+    let mesh = lon.mesh_analysis(all_envelopes, all_witnesses, all_challenges, trails, 86400) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, mesh: mesh })
   else if req.path == "/dispute/resolve" && req.method == "POST" then
     let body = json.decode(req.body) in
     let target_digest = body.challenge.target_digest_hex in

@@ -1,0 +1,160 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// Longitudinal Epistemic Analysis
+// Query how belief on subject X changed over time.
+// Full audit trail across all participants.
+// Velocity of belief change as a signal.
+//
+// A belief timeline is a sequence of epistemic states for a subject:
+//   { timestamp, value, witness_count, challenger_count, score, event }
+//
+// Velocity = rate of change of dominant belief value per time unit
+// High velocity = belief is unstable / contested
+// Low velocity = belief is settled / consensus forming
+
+fn make_belief_snapshot(timestamp, value, digest_hex, witness_count, challenge_count, event_kind) {
+  {
+    timestamp: timestamp,
+    value: value,
+    digest_hex: digest_hex,
+    witness_count: witness_count,
+    challenge_count: challenge_count,
+    score: witness_count - challenge_count,
+    event_kind: event_kind
+  }
+}
+
+fn build_timeline(claim_envelopes, witnesses, challenges, trails) {
+  let events = list.fold(claim_envelopes, [], fn(acc, env) {
+    let digest = env.digest_hex in
+    let env_witnesses = list.filter(witnesses, fn(w) { w.digest_hex == digest }) in
+    let env_challenges = list.filter(challenges, fn(c) { c.target_digest_hex == digest }) in
+    let trail = rec.getOr(trails, digest, []) in
+    let publish_events = list.map(list.filter(trail, fn(e) { e.event_kind == "published" }), fn(e) {
+      make_belief_snapshot(e.timestamp_unix_secs, env.claim.object, digest,
+        list.len(env_witnesses), list.len(env_challenges), "published")
+    }) in
+    let witness_events = list.map(list.filter(trail, fn(e) { e.event_kind == "witnessed" }), fn(e) {
+      make_belief_snapshot(e.timestamp_unix_secs, env.claim.object, digest,
+        list.len(env_witnesses), list.len(env_challenges), "witnessed")
+    }) in
+    let challenge_events = list.map(list.filter(trail, fn(e) { e.event_kind == "challenged" }), fn(e) {
+      make_belief_snapshot(e.timestamp_unix_secs, env.claim.object, digest,
+        list.len(env_witnesses), list.len(env_challenges), "challenged")
+    }) in
+    list.concat([acc, publish_events, witness_events, challenge_events])
+  }) in
+  list.sort_by(events, fn(a, b) { if a.timestamp < b.timestamp then -1 else if a.timestamp > b.timestamp then 1 else 0 })
+}
+
+fn dominant_belief_at(timeline, timestamp) {
+  let before = list.filter(timeline, fn(e) { e.timestamp <= timestamp }) in
+  if list.len(before) == 0 then null
+  else
+    let by_score = list.sort_by(before, fn(a, b) { if a.score > b.score then -1 else if a.score < b.score then 1 else 0 }) in
+    list.head(by_score)
+}
+
+fn compute_velocity(timeline, window_secs) {
+  if list.len(timeline) < 2 then
+    { velocity: 0, stable: true, reason: "insufficient data" }
+  else
+    let sorted = list.sort_by(timeline, fn(a, b) { if a.timestamp < b.timestamp then -1 else if a.timestamp > b.timestamp then 1 else 0 }) in
+    let first = list.head(sorted) in
+    let last = list.last(sorted) in
+    let time_span = last.timestamp - first.timestamp in
+    if time_span == 0 then
+      { velocity: 0, stable: true, reason: "all events at same timestamp" }
+    else
+      let value_changes = list.fold(sorted, { prev: null, changes: 0 }, fn(acc, e) {
+        if acc.prev == null then { prev: e.value, changes: 0 }
+        else if acc.prev != e.value then { prev: e.value, changes: acc.changes + 1 }
+        else { prev: acc.prev, changes: acc.changes }
+      }) in
+      let changes_per_window = if time_span < window_secs then value_changes.changes
+        else value_changes.changes * window_secs / time_span in
+      {
+        velocity: changes_per_window,
+        stable: changes_per_window == 0,
+        total_changes: value_changes.changes,
+        time_span_secs: time_span,
+        reason: if changes_per_window == 0 then "belief stable" else "belief shifting"
+      }
+}
+
+fn belief_convergence(timeline) {
+  if list.len(timeline) == 0 then
+    { converged: false, reason: "no data" }
+  else
+    let recent = list.last(timeline) in
+    let unique_values = list.dedupe(list.map(timeline, fn(e) { e.value })) in
+    let top_score = recent.score in
+    {
+      converged: list.len(unique_values) == 1 || top_score >= 3,
+      dominant_value: recent.value,
+      dominant_score: top_score,
+      unique_values: list.len(unique_values),
+      total_events: list.len(timeline),
+      reason: if list.len(unique_values) == 1 then "single belief value"
+        else if top_score >= 3 then "dominant belief has strong witness support"
+        else "multiple competing beliefs"
+    }
+}
+
+fn subject_analysis(claim_space, subject, claim_envelopes, witnesses, challenges, trails, window_secs) {
+  let subject_claims = list.filter(claim_envelopes, fn(env) {
+    env.claim.claim_space == claim_space && env.claim.subject == subject
+  }) in
+  let timeline = build_timeline(subject_claims, witnesses, challenges, trails) in
+  let velocity = compute_velocity(timeline, window_secs) in
+  let convergence = belief_convergence(timeline) in
+  let participants = list.dedupe(list.map(subject_claims, fn(env) { env.claim.issuer_node_id })) in
+  {
+    claim_space: claim_space,
+    subject: subject,
+    claim_count: list.len(subject_claims),
+    participant_count: list.len(participants),
+    participants: participants,
+    timeline: timeline,
+    velocity: velocity,
+    convergence: convergence,
+    first_claim_ts: if list.len(timeline) > 0 then list.head(timeline).timestamp else 0,
+    last_event_ts: if list.len(timeline) > 0 then list.last(timeline).timestamp else 0
+  }
+}
+
+fn mesh_analysis(claim_envelopes, witnesses, challenges, trails, window_secs) {
+  let all_subjects = list.dedupe(list.map(claim_envelopes, fn(env) {
+    str.concat([env.claim.claim_space, ":", env.claim.subject])
+  })) in
+  let analyses = list.map(all_subjects, fn(key) {
+    let parts = str.split(key, ":") in
+    let claim_space = list.head(parts) in
+    let subject = str.join(list.tail(parts), ":") in
+    subject_analysis(claim_space, subject, claim_envelopes, witnesses, challenges, trails, window_secs)
+  }) in
+  let stable = list.filter(analyses, fn(a) { a.velocity.stable }) in
+  let unstable = list.filter(analyses, fn(a) { !a.velocity.stable }) in
+  let converged = list.filter(analyses, fn(a) { a.convergence.converged }) in
+  {
+    total_subjects: list.len(all_subjects),
+    stable_count: list.len(stable),
+    unstable_count: list.len(unstable),
+    converged_count: list.len(converged),
+    analyses: analyses
+  }
+}
+
+export {
+  make_belief_snapshot,
+  build_timeline,
+  dominant_belief_at,
+  compute_velocity,
+  belief_convergence,
+  subject_analysis,
+  mesh_analysis
+}

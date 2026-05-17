@@ -1,0 +1,110 @@
+import("../src/longitudinal") as lon
+import("std/list") as list
+import("std/str") as str
+
+fn make_env(digest, subject, value, ts) {
+  {
+    digest_hex: digest,
+    claim: {
+      claim_space: "research.result.claims",
+      subject: subject,
+      object: value,
+      issuer_node_id: "oxford-node",
+      timestamp_unix_secs: ts,
+      evidence_refs: []
+    }
+  }
+}
+
+fn make_trail_event(kind, ts) {
+  { event_kind: kind, timestamp_unix_secs: ts, event_data: {} }
+}
+
+test "build timeline orders events by timestamp" {
+  let env = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let trails = { "sha256:d001": [
+    make_trail_event("published", 1000),
+    make_trail_event("witnessed", 1010),
+    make_trail_event("witnessed", 1020)
+  ]} in
+  let timeline = lon.build_timeline([env], [], [], trails) in
+  list.len(timeline) == 3 && list.head(timeline).timestamp == 1000
+}
+
+test "compute velocity: stable when single value" {
+  let env = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let trails = { "sha256:d001": [
+    make_trail_event("published", 1000),
+    make_trail_event("witnessed", 2000)
+  ]} in
+  let timeline = lon.build_timeline([env], [], [], trails) in
+  let v = lon.compute_velocity(timeline, 86400) in
+  v.stable
+}
+
+test "compute velocity: unstable when value changes" {
+  let e1 = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let e2 = make_env("sha256:d002", "CO2-2024", "422ppm", 5000) in
+  let trails = {
+    "sha256:d001": [make_trail_event("published", 1000)],
+    "sha256:d002": [make_trail_event("published", 5000)]
+  } in
+  let timeline = lon.build_timeline([e1, e2], [], [], trails) in
+  let v = lon.compute_velocity(timeline, 86400) in
+  !v.stable && v.total_changes > 0
+}
+
+test "belief convergence: converged when single value" {
+  let env = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let trails = { "sha256:d001": [make_trail_event("published", 1000)] } in
+  let timeline = lon.build_timeline([env], [], [], trails) in
+  let c = lon.belief_convergence(timeline) in
+  c.converged
+}
+
+test "belief convergence: not converged with competing values" {
+  let e1 = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let e2 = make_env("sha256:d002", "CO2-2024", "422ppm", 2000) in
+  let trails = {
+    "sha256:d001": [make_trail_event("published", 1000)],
+    "sha256:d002": [make_trail_event("published", 2000)]
+  } in
+  let timeline = lon.build_timeline([e1, e2], [], [], trails) in
+  let c = lon.belief_convergence(timeline) in
+  c.unique_values == 2
+}
+
+test "subject analysis returns participant count" {
+  let e1 = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let trails = { "sha256:d001": [make_trail_event("published", 1000)] } in
+  let analysis = lon.subject_analysis("research.result.claims", "CO2-2024", [e1], [], [], trails, 86400) in
+  analysis.claim_count == 1 && analysis.participant_count == 1
+}
+
+test "dominant belief at timestamp" {
+  let e1 = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let e2 = make_env("sha256:d002", "CO2-2024", "422ppm", 2000) in
+  let trails = {
+    "sha256:d001": [make_trail_event("published", 1000)],
+    "sha256:d002": [make_trail_event("published", 2000)]
+  } in
+  let timeline = lon.build_timeline([e1, e2], [], [], trails) in
+  let dominant = lon.dominant_belief_at(timeline, 1500) in
+  dominant != null
+}
+
+test "mesh analysis counts subjects" {
+  let e1 = make_env("sha256:d001", "CO2-2024", "421ppm", 1000) in
+  let e2 = make_env("sha256:d002", "temp-2024", "+1.48C", 1000) in
+  let trails = {
+    "sha256:d001": [make_trail_event("published", 1000)],
+    "sha256:d002": [make_trail_event("published", 1000)]
+  } in
+  let mesh = lon.mesh_analysis([e1, e2], [], [], trails, 86400) in
+  mesh.total_subjects == 2
+}
+
+test "velocity is zero for insufficient data" {
+  let v = lon.compute_velocity([], 86400) in
+  v.velocity == 0 && v.stable
+}
