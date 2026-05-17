@@ -1,0 +1,184 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// Autonomous Dispute Resolution
+// When a claim is challenged, the system attempts automated resolution:
+//
+// Resolution pipeline:
+//   1. Triage: classify the challenge kind
+//   2. Evidence review: count witnesses, check provenance refs, check reproducibility
+//   3. Verdict: UPHELD, OVERTURNED, or ESCALATED (human review needed)
+//   4. Record: resolution recorded in audit trail with reasoning
+//
+// Verdict rules:
+//   UPHELD (challenge succeeds, claim invalidated):
+//     - Claim has 0 witnesses AND challenge has evidence refs
+//     - Claim has no provenance refs AND kind is "methodological"
+//   OVERTURNED (challenge fails, claim stands):
+//     - Claim has >= min_witnesses AND challenge has no evidence refs
+//     - Claim has provenance refs AND kind is "methodological"
+//   ESCALATED (automated resolution insufficient):
+//     - Conflicting evidence on both sides
+//     - Challenge kind is "semantic" (requires human judgment)
+//     - Novel claim kind not covered by automated rules
+
+fn make_dispute(challenge, claim_envelope, witnesses, timestamp_unix_secs) {
+  let dispute_content = json.canonicalize({
+    challenge_digest: challenge.digest_hex,
+    claim_digest: challenge.target_digest_hex,
+    timestamp_unix_secs: timestamp_unix_secs
+  }) in
+  {
+    dispute_digest: hash.sha256_text(dispute_content),
+    challenge: challenge,
+    claim_envelope: claim_envelope,
+    witness_count: list.len(witnesses),
+    witnesses: witnesses,
+    timestamp_unix_secs: timestamp_unix_secs,
+    status: "open"
+  }
+}
+
+fn has_provenance_refs(envelope) {
+  list.len(envelope.claim.evidence_refs) > 0
+}
+
+fn challenge_has_evidence(challenge) {
+  rec.has(challenge, "evidence") && challenge.evidence != null && challenge.evidence != ""
+}
+
+fn triage(dispute, min_witnesses) {
+  let kind = dispute.challenge.kind in
+  let witness_count = dispute.witness_count in
+  let claim_has_provenance = has_provenance_refs(dispute.claim_envelope) in
+  let challenge_has_ev = challenge_has_evidence(dispute.challenge) in
+  if kind == "semantic" then
+    { category: "semantic", auto_resolvable: false, reason: "semantic disputes require human judgment" }
+  else if kind == "safety_concern" then
+    { category: "safety", auto_resolvable: true, reason: "safety challenges resolved by witness count" }
+  else if kind == "methodological" then
+    { category: "methodological", auto_resolvable: true, reason: "methodological disputes resolved by provenance" }
+  else if kind == "overconfidence" then
+    { category: "overconfidence", auto_resolvable: true, reason: "overconfidence resolved by calibration check" }
+  else if kind == "climate_risk_omission" then
+    { category: "domain_specific", auto_resolvable: true, reason: "domain-specific challenge" }
+  else
+    { category: "general", auto_resolvable: true, reason: "general challenge resolved by witness count" }
+}
+
+fn resolve(dispute, min_witnesses) {
+  let triage_result = triage(dispute, min_witnesses) in
+  if !triage_result.auto_resolvable then
+    {
+      verdict: "ESCALATED",
+      reason: triage_result.reason,
+      dispute_digest: dispute.dispute_digest,
+      requires_human: true,
+      auto_resolved: false
+    }
+  else
+    let witness_count = dispute.witness_count in
+    let claim_has_provenance = has_provenance_refs(dispute.claim_envelope) in
+    let challenge_has_ev = challenge_has_evidence(dispute.challenge) in
+    let kind = dispute.challenge.kind in
+    let verdict = if kind == "methodological" then
+      if claim_has_provenance then "OVERTURNED"
+      else "UPHELD"
+    else if kind == "overconfidence" || kind == "climate_risk_omission" then
+      if witness_count >= min_witnesses then "OVERTURNED"
+      else "UPHELD"
+    else
+      if witness_count >= min_witnesses && !challenge_has_ev then "OVERTURNED"
+      else if witness_count == 0 && challenge_has_ev then "UPHELD"
+      else "ESCALATED"
+    in
+    let reason = if verdict == "UPHELD" then
+      str.concat(["Challenge upheld: ", dispute.challenge.kind, " — claim has ", str.from(witness_count), " witnesses"])
+    else if verdict == "OVERTURNED" then
+      str.concat(["Challenge overturned: claim has ", str.from(witness_count), " witnesses and sufficient provenance"])
+    else
+      str.concat(["Escalated: conflicting evidence — ", str.from(witness_count), " witnesses, challenge kind: ", kind])
+    in
+    {
+      verdict: verdict,
+      reason: reason,
+      dispute_digest: dispute.dispute_digest,
+      requires_human: verdict == "ESCALATED",
+      auto_resolved: verdict != "ESCALATED",
+      witness_count: witness_count,
+      claim_has_provenance: claim_has_provenance
+    }
+}
+
+fn make_resolution_record(dispute, resolution, resolver_node_id, timestamp_unix_secs) {
+  {
+    kind: "dispute_resolution",
+    dispute_digest: dispute.dispute_digest,
+    challenge_digest: dispute.challenge.digest_hex,
+    claim_digest: dispute.challenge.target_digest_hex,
+    verdict: resolution.verdict,
+    reason: resolution.reason,
+    resolver_node_id: resolver_node_id,
+    requires_human: resolution.requires_human,
+    auto_resolved: resolution.auto_resolved,
+    timestamp_unix_secs: timestamp_unix_secs,
+    record_digest: hash.sha256_text(json.canonicalize({
+      dispute_digest: dispute.dispute_digest,
+      verdict: resolution.verdict,
+      resolver_node_id: resolver_node_id,
+      timestamp_unix_secs: timestamp_unix_secs
+    }))
+  }
+}
+
+fn empty_dispute_store() {
+  { disputes: {}, resolutions: {}, escalated: [], resolved: [] }
+}
+
+fn store_dispute(store, dispute) {
+  { ...store, disputes: rec.set(store.disputes, dispute.dispute_digest, dispute) }
+}
+
+fn store_resolution(store, record) {
+  let next_resolved = if record.verdict != "ESCALATED" then
+    list.append(store.resolved, record.dispute_digest)
+  else store.resolved in
+  let next_escalated = if record.verdict == "ESCALATED" then
+    list.append(store.escalated, record.dispute_digest)
+  else store.escalated in
+  {
+    ...store,
+    resolutions: rec.set(store.resolutions, record.record_digest, record),
+    resolved: next_resolved,
+    escalated: next_escalated
+  }
+}
+
+fn dispute_summary(store) {
+  let total = list.len(rec.keys(store.disputes)) in
+  let resolved = list.len(store.resolved) in
+  let escalated = list.len(store.escalated) in
+  let upheld = list.len(list.filter(rec.keys(store.resolutions), fn(k) {
+    rec.get(store.resolutions, k).verdict == "UPHELD"
+  })) in
+  let overturned = list.len(list.filter(rec.keys(store.resolutions), fn(k) {
+    rec.get(store.resolutions, k).verdict == "OVERTURNED"
+  })) in
+  {
+    total: total,
+    resolved: resolved,
+    escalated: escalated,
+    upheld: upheld,
+    overturned: overturned,
+    auto_resolution_rate: if total == 0 then 100 else resolved * 100 / total
+  }
+}
+
+export {
+  make_dispute, triage, resolve, make_resolution_record,
+  empty_dispute_store, store_dispute, store_resolution, dispute_summary,
+  has_provenance_refs, challenge_has_evidence
+}

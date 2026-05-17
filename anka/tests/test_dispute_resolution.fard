@@ -1,0 +1,122 @@
+import("../src/dispute_resolution") as dr
+import("../src/challenge") as ch
+import("../src/claim") as claim
+import("../src/keypair") as kp
+import("std/list") as list
+import("std/str") as str
+
+let kp1 = kp.generate_keypair("challenger-seed-001")
+let kp2 = kp.generate_keypair("issuer-seed-002")
+
+fn make_test_envelope(claim_space, subject, finding, refs) {
+  let c = claim.make_claim(claim_space, subject, finding, finding, refs, kp2.node_id, 1000) in
+  claim.sign_claim(c, kp2.private_key_hex)
+}
+
+fn make_test_challenge(target_digest, kind, evidence) {
+  {
+    digest_hex: "sha256:challenge001",
+    target_digest_hex: target_digest,
+    challenger_node_id: kp1.node_id,
+    kind: kind,
+    evidence: evidence,
+    timestamp_unix_secs: 1000
+  }
+}
+
+test "triage: semantic challenge is not auto-resolvable" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "semantic", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let t = dr.triage(dispute, 1) in
+  !t.auto_resolvable
+}
+
+test "triage: methodological challenge is auto-resolvable" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "methodological", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let t = dr.triage(dispute, 1) in
+  t.auto_resolvable
+}
+
+test "resolve: semantic challenge escalates" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "semantic", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  resolution.verdict == "ESCALATED" && resolution.requires_human
+}
+
+test "resolve: methodological upheld when no provenance" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "methodological", "no dataset cited") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  resolution.verdict == "UPHELD" && resolution.auto_resolved
+}
+
+test "resolve: methodological overturned when claim has provenance" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", ["sha256:dataset001"]) in
+  let challenge = make_test_challenge(env.digest_hex, "methodological", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  resolution.verdict == "OVERTURNED" && resolution.auto_resolved
+}
+
+test "resolve: overturned when claim has sufficient witnesses" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "general", "") in
+  let witnesses = ["w1", "w2"] in
+  let dispute = dr.make_dispute(challenge, env, witnesses, 1000) in
+  let resolution = dr.resolve(dispute, 2) in
+  resolution.verdict == "OVERTURNED"
+}
+
+test "resolve: upheld when 0 witnesses and challenge has evidence" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "general", "contradicting dataset") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  resolution.verdict == "UPHELD"
+}
+
+test "resolve: escalated when conflicting evidence" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "general", "contradicting data") in
+  let witnesses = ["w1"] in
+  let dispute = dr.make_dispute(challenge, env, witnesses, 1) in
+  let resolution = dr.resolve(dispute, 1) in
+  resolution.verdict == "ESCALATED"
+}
+
+test "resolution record is content-addressed" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "methodological", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  let r1 = dr.make_resolution_record(dispute, resolution, "resolver-node", 1000) in
+  let r2 = dr.make_resolution_record(dispute, resolution, "resolver-node", 1000) in
+  r1.record_digest == r2.record_digest
+}
+
+test "dispute store: summary counts correctly" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  let challenge = make_test_challenge(env.digest_hex, "methodological", "") in
+  let dispute = dr.make_dispute(challenge, env, [], 1000) in
+  let resolution = dr.resolve(dispute, 1) in
+  let record = dr.make_resolution_record(dispute, resolution, "resolver", 1000) in
+  let store = dr.store_resolution(dr.store_dispute(dr.empty_dispute_store(), dispute), record) in
+  let summary = dr.dispute_summary(store) in
+  summary.total == 1 && summary.upheld == 1 && summary.resolved == 1
+}
+
+test "has provenance refs: true when refs present" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", ["sha256:ref001"]) in
+  dr.has_provenance_refs(env)
+}
+
+test "has provenance refs: false when no refs" {
+  let env = make_test_envelope("research.result.claims", "CO2", "421ppm", []) in
+  !dr.has_provenance_refs(env)
+}

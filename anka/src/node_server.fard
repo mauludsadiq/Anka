@@ -20,6 +20,7 @@ import("capability_store") as caps
 import("economy") as econ
 import("rate_limit") as rl
 import("inheritance") as inh
+import("dispute_resolution") as dr
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -29,6 +30,7 @@ import("capability_store") as caps
 import("economy") as econ
 import("rate_limit") as rl
 import("inheritance") as inh
+import("dispute_resolution") as dr
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -257,6 +259,29 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
     let next_state = rec.set(state, "capability_store", next_store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if req.path == "/dispute/resolve" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let target_digest = body.challenge.target_digest_hex in
+    let claim_envelope = node.fetch_claim(state, target_digest) in
+    if claim_envelope == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "claim not found")
+    else
+      let all_witnesses = rec.keys(state.witnesses) in
+      let claim_witnesses = list.filter(all_witnesses, fn(k) {
+        rec.get(state.witnesses, k).digest_hex == target_digest
+      }) in
+      let dispute = dr.make_dispute(body.challenge, claim_envelope, claim_witnesses, now) in
+      let resolution = dr.resolve(dispute, rec.getOr(body, "min_witnesses", 1)) in
+      let record = dr.make_resolution_record(dispute, resolution, state.node_id, now) in
+      let dr_store = rec.getOr(state, "dispute_store", dr.empty_dispute_store()) in
+      let next_dr = dr.store_resolution(dr.store_dispute(dr_store, dispute), record) in
+      let next_state = rec.set(state, "dispute_store", next_dr) in
+      let arc2 = arch.record_claim_trail(arc, target_digest, "dispute_resolved", { verdict: resolution.verdict, resolver: state.node_id, auto: resolution.auto_resolved }, now) in
+      json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, verdict: resolution.verdict, reason: resolution.reason, requires_human: resolution.requires_human, auto_resolved: resolution.auto_resolved, record: record })
+  else if req.path == "/dispute/status" && req.method == "GET" then
+    let dr_store = rec.getOr(state, "dispute_store", dr.empty_dispute_store()) in
+    let summary = dr.dispute_summary(dr_store) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, summary: summary })
   else if req.path == "/inherit/snapshot" && req.method == "GET" then
     let known = state.known_digests in
     let snapshot = inh.make_snapshot(state.node_id, list.dedupe(known), now) in
