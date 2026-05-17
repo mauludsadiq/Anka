@@ -11,9 +11,9 @@ import("discovery") as disc
 import("origin_federation") as fed
 import("origin_federation") as fed
 
-let port = 18090
+let port = 18091
 let node_name = "anka-origin"
-let db_path = "file:out/origin/anka_origin.db?cache=shared&mode=rwc"
+let db_path = "file:out/origin/anka_origin_b.db?cache=shared&mode=rwc"
 
 let db = sqlite.open(db_path)
 let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")

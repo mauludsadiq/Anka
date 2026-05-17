@@ -1,0 +1,104 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/hash") as hash
+import("std/process") as process
+
+fn make_proposal(claim_space_name, category, convergence_policy, proposer_id, timestamp) {
+  {
+    proposal_id: hash.sha256_text(str.concat([claim_space_name, ":", proposer_id, ":", str.from(timestamp)])),
+    claim_space_name: claim_space_name,
+    category: category,
+    convergence_policy: convergence_policy,
+    proposer_id: proposer_id,
+    timestamp: timestamp
+  }
+}
+
+fn vote_one(peer_addr, proposal) {
+  let payload = json.encode({ proposal: proposal }) in
+  let captured = process.capture("curl", ["-s", "-m", "3", "-X", "POST",
+    "-H", "Content-Type: application/json",
+    "-d", payload,
+    str.concat([peer_addr, "/federation/vote"])]) in
+  if !captured.ok then
+    { peer: peer_addr, vote: "unreachable", accept: false }
+  else if str.len(captured.stdout) == 0 then
+    { peer: peer_addr, vote: "unreachable", accept: false }
+  else
+    let body = json.decode(captured.stdout) in
+    { peer: peer_addr, vote: if body.accept then "accept" else "reject", accept: body.accept }
+}
+
+fn collect_votes(peers, proposal, self_addr) {
+  let results = list.map(peers, fn(peer_addr) { vote_one(peer_addr, proposal) }) in
+  list.fold(results, { votes: [{ peer: self_addr, vote: "accept" }], accept_count: 1, reject_count: 0 }, fn(acc, r) {
+    let next_accept = if r.accept then acc.accept_count + 1 else acc.accept_count in
+    { votes: list.append(acc.votes, { peer: r.peer, vote: r.vote }), accept_count: next_accept, reject_count: acc.reject_count }
+  })
+}
+
+fn has_majority(vote_result, total_nodes) {
+  let needed = (total_nodes / 2) + 1 in
+  vote_result.accept_count >= needed
+}
+
+fn broadcast_commit(peers, proposal) {
+  list.fold(peers, { committed: 0, failed: 0 }, fn(acc, peer_addr) {
+    let captured = process.capture("curl", ["-s", "-m", "3", "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-d", json.encode({ proposal: proposal }),
+      str.concat([peer_addr, "/federation/commit"])]) in
+    if captured.ok && str.len(captured.stdout) > 0 then
+      { committed: acc.committed + 1, failed: acc.failed }
+    else
+      { committed: acc.committed, failed: acc.failed + 1 }
+  })
+}
+
+fn propose_claim_space(self_addr, peers, claim_space_name, category, convergence_policy, proposer_id, timestamp) {
+  let proposal = make_proposal(claim_space_name, category, convergence_policy, proposer_id, timestamp) in
+  let total_nodes = list.len(peers) + 1 in
+  if total_nodes == 1 then
+    { ok: true, committed: true, proposal: proposal, reason: "single node — auto-commit" }
+  else
+    let vote_result = collect_votes(peers, proposal, self_addr) in
+    if has_majority(vote_result, total_nodes) then
+      let commit_result = broadcast_commit(peers, proposal) in
+      { ok: true, committed: true, proposal: proposal, votes: vote_result.votes, committed_count: commit_result.committed }
+    else
+      { ok: false, committed: false, proposal: proposal, votes: vote_result.votes, reason: "no majority" }
+}
+
+fn validate_proposal(proposal, known_spaces) {
+  let already_exists = list.any(known_spaces, fn(s) { s == proposal.claim_space_name }) in
+  if already_exists then
+    { accept: false, reason: "claim space already registered" }
+  else if str.len(proposal.claim_space_name) == 0 then
+    { accept: false, reason: "empty claim space name" }
+  else
+    { accept: true, reason: "valid proposal" }
+}
+
+fn federation_status(self_addr, peers) {
+  let peer_statuses = list.map(peers, fn(peer_addr) {
+    let captured = process.capture("curl", ["-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}",
+      str.concat([peer_addr, "/health"])]) in
+    if !captured.ok then
+      { addr: peer_addr, ok: false }
+    else
+      { addr: peer_addr, ok: captured.stdout == "200" }
+  }) in
+  let online = list.len(list.filter(peer_statuses, fn(s) { s.ok })) in
+  {
+    self: self_addr,
+    peers: peer_statuses,
+    online_count: online + 1,
+    total_count: list.len(peers) + 1,
+    quorum: online + 1 >= (list.len(peers) + 1) / 2 + 1
+  }
+}
+
+export { make_proposal, collect_votes, has_majority, broadcast_commit, propose_claim_space, validate_proposal, federation_status }

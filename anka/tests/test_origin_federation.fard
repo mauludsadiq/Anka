@@ -1,0 +1,61 @@
+import("../src/origin_federation") as fed
+import("std/list") as list
+import("std/str") as str
+
+test "make proposal has stable id" {
+  let p1 = fed.make_proposal("research.result.claims", "interpretive", "plural", "origin:1", 1000) in
+  let p2 = fed.make_proposal("research.result.claims", "interpretive", "plural", "origin:1", 1000) in
+  p1.proposal_id == p2.proposal_id
+}
+
+test "different claim spaces produce different proposal ids" {
+  let p1 = fed.make_proposal("research.result.claims", "interpretive", "plural", "origin:1", 1000) in
+  let p2 = fed.make_proposal("dataset.provenance", "invariant", "single-winner", "origin:1", 1000) in
+  p1.proposal_id != p2.proposal_id
+}
+
+test "has majority requires more than half" {
+  let votes_2_of_3 = { accept_count: 2, reject_count: 1, votes: [] } in
+  let votes_1_of_3 = { accept_count: 1, reject_count: 2, votes: [] } in
+  fed.has_majority(votes_2_of_3, 3) && !fed.has_majority(votes_1_of_3, 3)
+}
+
+test "has majority with 3 of 5" {
+  let votes = { accept_count: 3, reject_count: 2, votes: [] } in
+  fed.has_majority(votes, 5)
+}
+
+test "has majority fails with 2 of 5" {
+  let votes = { accept_count: 2, reject_count: 3, votes: [] } in
+  !fed.has_majority(votes, 5)
+}
+
+test "single node auto-commits without peers" {
+  let result = fed.propose_claim_space("http://localhost:18090", [], "new.space", "interpretive", "plural", "origin:1", 1000) in
+  result.ok && result.committed
+}
+
+test "validate proposal accepts new space" {
+  let proposal = fed.make_proposal("new.claim.space", "interpretive", "plural", "origin:1", 1000) in
+  let known = ["research.result.claims", "dataset.provenance"] in
+  let result = fed.validate_proposal(proposal, known) in
+  result.accept
+}
+
+test "validate proposal rejects duplicate space" {
+  let proposal = fed.make_proposal("research.result.claims", "interpretive", "plural", "origin:1", 1000) in
+  let known = ["research.result.claims", "dataset.provenance"] in
+  let result = fed.validate_proposal(proposal, known) in
+  !result.accept && result.reason == "claim space already registered"
+}
+
+test "validate proposal rejects empty name" {
+  let proposal = fed.make_proposal("", "interpretive", "plural", "origin:1", 1000) in
+  let result = fed.validate_proposal(proposal, []) in
+  !result.accept
+}
+
+test "federation status counts nodes correctly" {
+  let status = fed.federation_status("http://localhost:18090", []) in
+  status.online_count == 1 && status.total_count == 1 && status.quorum
+}
