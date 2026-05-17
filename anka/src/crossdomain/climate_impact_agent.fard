@@ -1,0 +1,167 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/int") as int
+
+// Climate Impact Agent
+// Cross-domain: reads economic forecasts, challenges those that ignore
+// climate risk signals. Publishes climate-adjusted economic assessments.
+//
+// Domain bridge: market.forecast.claims + research.result.claims -> climate.economic.claims
+//
+// Deliberation:
+//   - High-confidence forecast (>70%) without climate risk citation: challenge
+//   - Any forecast: publish climate-adjusted version citing climate finding
+//   - Already seen: ignore
+
+fn make_dalil(node_address) {
+  {
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let claims = list.fold(kd.known_digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              score: 0,
+              issuer: env.claim.issuer_node_id,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    post_node: fn(addr, path, body) {
+      let result = http.post(str.concat([addr, path]), json.encode(body)) in
+      if result.status == 200 then { ok: true, data: json.decode(result.body) }
+      else { ok: false }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn parse_confidence(finding) {
+  if str.contains(finding, "confidence:") then
+    let parts = str.split(finding, "confidence:") in
+    if list.len(parts) < 2 then 50
+    else
+      let after = list.get(parts, 1) in
+      let num_str = str.split(str.split(after, " ") |> list.head, "|") |> list.head in
+      let parsed = int.parse(str.trim(num_str)) in
+      if parsed.t == "ok" then parsed.v else 50
+  else 50
+}
+
+fn has_climate_citation(claim) {
+  list.any(claim.evidence_refs, fn(ref) {
+    str.starts_with(ref, "sha256:")
+  })
+}
+
+fn derive_climate_adjusted(subject, forecast_finding, climate_digest) {
+  let confidence = parse_confidence(forecast_finding) in
+  let adjustment = if confidence > 80 then "DOWNWARD REVISION REQUIRED"
+    else if confidence > 60 then "MODERATE CLIMATE RISK"
+    else "CLIMATE RISK NOTED" in
+  str.concat([adjustment, " on ", subject, ": climate impact not priced into forecast — original: ", forecast_finding])
+}
+
+fn deliberate(claim, seen_digests, confidence_threshold) {
+  let digest = claim.digest_hex in
+  if rec.has(seen_digests, digest) then
+    { action: "ignore", reason: "already seen", digest: digest }
+  else if claim.claim_space != "market.forecast.claims" then
+    { action: "ignore", reason: "not an economic forecast", digest: digest }
+  else
+    let confidence = parse_confidence(claim.finding) in
+    if confidence > confidence_threshold && !has_climate_citation(claim) then
+      { action: "challenge_and_adjust", reason: str.concat(["forecast ignores climate risk at ", str.from(confidence), "% confidence"]), digest: digest }
+    else
+      { action: "adjust", reason: "publishing climate-adjusted assessment", digest: digest }
+}
+
+fn run(node_address, institution, climate_digest, since_ts, timestamp, confidence_threshold) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["market.forecast.claims"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let result = list.fold(feed.claims, { challenged: 0, adjusted: 0, seen: {}, cross_domain_digests: [] }, fn(acc, claim) {
+      let delib = deliberate(claim, acc.seen, confidence_threshold) in
+      let next_seen = rec.set(acc.seen, claim.digest_hex, true) in
+      if delib.action == "challenge_and_adjust" then
+        let _ = dalil.post_node(node_address, "/challenge", {
+          target_digest_hex: claim.digest_hex,
+          challenger_node_id: str.concat([institution, "-climate-impact-agent"]),
+          kind: "climate_risk_omission",
+          reasoning: delib.reason,
+          challenger_signature_hex: "sig",
+          timestamp_unix_secs: timestamp
+        }) in
+        let adjusted = derive_climate_adjusted(claim.subject, claim.finding, climate_digest) in
+        let refs = if climate_digest != null then [claim.digest_hex, climate_digest] else [claim.digest_hex] in
+        let published = dalil.compose(node_address, "climate.economic.claims", claim.subject,
+          adjusted, refs, timestamp) in
+        {
+          challenged: acc.challenged + 1,
+          adjusted: acc.adjusted + 1,
+          seen: next_seen,
+          cross_domain_digests: list.append(acc.cross_domain_digests, {
+            forecast_digest: claim.digest_hex,
+            climate_digest: climate_digest,
+            adjusted_digest: published.digest_hex,
+            subject: claim.subject
+          })
+        }
+      else if delib.action == "adjust" then
+        let adjusted = derive_climate_adjusted(claim.subject, claim.finding, climate_digest) in
+        let refs = if climate_digest != null then [claim.digest_hex, climate_digest] else [claim.digest_hex] in
+        let published = dalil.compose(node_address, "climate.economic.claims", claim.subject,
+          adjusted, refs, timestamp) in
+        {
+          ...acc,
+          adjusted: acc.adjusted + 1,
+          seen: next_seen,
+          cross_domain_digests: list.append(acc.cross_domain_digests, {
+            forecast_digest: claim.digest_hex,
+            climate_digest: climate_digest,
+            adjusted_digest: published.digest_hex,
+            subject: claim.subject
+          })
+        }
+      else
+        { ...acc, seen: next_seen }
+    }) in
+    {
+      ok: true,
+      agent: "climate-impact",
+      institution: institution,
+      observed: list.len(feed.claims),
+      challenged: result.challenged,
+      adjusted: result.adjusted,
+      cross_domain_digests: result.cross_domain_digests
+    }
+}
+
+export { make_dalil, parse_confidence, has_climate_citation, derive_climate_adjusted, deliberate, run }

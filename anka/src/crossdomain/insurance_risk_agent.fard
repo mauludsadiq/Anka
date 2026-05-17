@@ -1,0 +1,127 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Insurance Risk Agent
+// Cross-domain: reads drug trial results and safety claims, witnesses those
+// that affect insurance risk modeling, publishes actuarial impact assessments.
+//
+// Domain bridge: clinical.trial.results + drug.safety.claims -> insurance.risk.claims
+//
+// Deliberation:
+//   - Trial results with adverse events: witness (affects risk pool) + publish actuarial impact
+//   - Clean trial results with high efficacy: witness + publish positive actuarial impact
+//   - Safety signals: witness + publish high-risk actuarial flag
+
+fn make_dalil(node_address) {
+  {
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let claims = list.fold(kd.known_digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              score: 0,
+              issuer: env.claim.issuer_node_id,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    post_node: fn(addr, path, body) {
+      let result = http.post(str.concat([addr, path]), json.encode(body)) in
+      if result.status == 200 then { ok: true, data: json.decode(result.body) }
+      else { ok: false }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn derive_actuarial_impact(subject, finding, claim_space) {
+  if claim_space == "drug.safety.claims" && str.contains(finding, "SAFETY SIGNAL") then
+    str.concat(["HIGH ACTUARIAL RISK FLAG for ", subject, ": safety signal elevates risk pool — ", finding])
+  else if str.contains(finding, "serious adverse") || str.contains(finding, "fatal") then
+    str.concat(["ELEVATED ACTUARIAL RISK for ", subject, ": adverse events increase premium basis — ", finding])
+  else if str.contains(finding, "efficacy") || str.contains(finding, "endpoint met") then
+    str.concat(["POSITIVE ACTUARIAL SIGNAL for ", subject, ": efficacy data supports coverage — ", finding])
+  else
+    str.concat(["ACTUARIAL MONITORING for ", subject, ": ", finding])
+}
+
+fn deliberate(claim, seen_digests) {
+  let digest = claim.digest_hex in
+  if rec.has(seen_digests, digest) then
+    { action: "ignore", reason: "already seen", digest: digest }
+  else if claim.claim_space == "clinical.trial.results" || claim.claim_space == "drug.safety.claims" then
+    { action: "witness_and_assess", reason: "biomedical claim affects insurance risk", digest: digest }
+  else
+    { action: "ignore", reason: "not a biomedical claim", digest: digest }
+}
+
+fn run(node_address, institution, since_ts, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["clinical.trial.results", "drug.safety.claims"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let result = list.fold(feed.claims, { witnessed: 0, assessed: 0, seen: {}, cross_domain_digests: [] }, fn(acc, claim) {
+      let delib = deliberate(claim, acc.seen) in
+      let next_seen = rec.set(acc.seen, claim.digest_hex, true) in
+      if delib.action == "witness_and_assess" then
+        let _ = dalil.post_node(node_address, "/witness", {
+          digest_hex: claim.digest_hex,
+          witness_node_id: str.concat([institution, "-insurance-agent"]),
+          validation_type: "actuarial_review",
+          timestamp_unix_secs: timestamp
+        }) in
+        let impact = derive_actuarial_impact(claim.subject, claim.finding, claim.claim_space) in
+        let published = dalil.compose(node_address, "insurance.risk.claims", claim.subject,
+          impact, [claim.digest_hex], timestamp) in
+        {
+          witnessed: acc.witnessed + 1,
+          assessed: acc.assessed + 1,
+          seen: next_seen,
+          cross_domain_digests: list.append(acc.cross_domain_digests, {
+            biomedical_digest: claim.digest_hex,
+            insurance_digest: published.digest_hex,
+            subject: claim.subject
+          })
+        }
+      else
+        { ...acc, seen: next_seen }
+    }) in
+    {
+      ok: true,
+      agent: "insurance-risk",
+      institution: institution,
+      observed: list.len(feed.claims),
+      witnessed: result.witnessed,
+      assessed: result.assessed,
+      cross_domain_digests: result.cross_domain_digests
+    }
+}
+
+export { make_dalil, is_energy_relevant: fn(f) { true }, derive_actuarial_impact, deliberate, run }

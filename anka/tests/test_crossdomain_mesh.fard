@@ -1,0 +1,129 @@
+import("../src/crossdomain/energy_infrastructure_agent") as energy
+import("../src/crossdomain/climate_impact_agent") as climate_impact
+import("std/str") as str
+import("std/list") as list
+
+test "energy agent identifies temperature as energy-relevant" {
+  energy.is_energy_relevant("Global mean temperature anomaly: +1.48C above baseline")
+}
+
+test "energy agent identifies CO2 as energy-relevant" {
+  energy.is_energy_relevant("421.3 ppm CO2 concentration, highest in 800k years")
+}
+
+test "energy agent identifies arctic as energy-relevant" {
+  energy.is_energy_relevant("critical: Arctic sea ice extent 4.28M km2")
+}
+
+test "energy agent: non-energy finding is not relevant" {
+  !energy.is_energy_relevant("Regulatory approval granted for DRUG-XA-001")
+}
+
+test "energy impact: critical for temperature anomaly" {
+  let impact = energy.derive_energy_impact("global-temp-2024", "critical: +1.48C above baseline") in
+  str.starts_with(impact, "CRITICAL ENERGY IMPACT")
+}
+
+test "energy impact: carbon signal for CO2 finding" {
+  let impact = energy.derive_energy_impact("CO2-2024", "421.3 ppm CO2 concentration") in
+  str.starts_with(impact, "CARBON TRANSITION SIGNAL")
+}
+
+test "energy deliberation: witness energy-relevant climate claim" {
+  let claim = {
+    digest_hex: "sha256:c001",
+    claim_space: "research.result.claims",
+    subject: "global-temp-2024",
+    finding: "temperature anomaly +1.48C",
+    evidence_refs: ["sha256:dataset001"],
+    score: 2,
+    issuer: "oxford-climate",
+    timestamp: 1775710900
+  } in
+  let delib = energy.deliberate(claim, {}) in
+  delib.action == "witness_and_impact"
+}
+
+test "energy deliberation: ignore non-climate claim" {
+  let claim = {
+    digest_hex: "sha256:c002",
+    claim_space: "clinical.trial.results",
+    subject: "TRIAL-CARDIO-001",
+    finding: "87% efficacy",
+    evidence_refs: [],
+    score: 0,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let delib = energy.deliberate(claim, {}) in
+  delib.action == "ignore"
+}
+
+test "energy deliberation: ignore already seen" {
+  let claim = {
+    digest_hex: "sha256:c003",
+    claim_space: "research.result.claims",
+    subject: "CO2-2024",
+    finding: "421 ppm CO2",
+    evidence_refs: [],
+    score: 0,
+    issuer: "oxford-climate",
+    timestamp: 1775710900
+  } in
+  let seen = { "sha256:c003": true } in
+  let delib = energy.deliberate(claim, seen) in
+  delib.action == "ignore"
+}
+
+test "climate impact agent parses confidence from forecast" {
+  let finding = "S&P 500 at 5800 | confidence:92 | model:EQUITY-V1" in
+  climate_impact.parse_confidence(finding) == 92
+}
+
+test "climate impact: challenge high-confidence forecast without climate citation" {
+  let claim = {
+    digest_hex: "sha256:f001",
+    claim_space: "market.forecast.claims",
+    subject: "SP500-Q1-2025",
+    finding: "S&P 500 at 5800 | confidence:92 | model:EQUITY-V1",
+    evidence_refs: [],
+    score: 0,
+    issuer: "oxford-finance",
+    timestamp: 1775710900
+  } in
+  let delib = climate_impact.deliberate(claim, {}, 70) in
+  delib.action == "challenge_and_adjust"
+}
+
+test "climate impact: adjust lower-confidence forecast" {
+  let claim = {
+    digest_hex: "sha256:f002",
+    claim_space: "market.forecast.claims",
+    subject: "GDP-Q1-2025",
+    finding: "GDP growth 2.1% | confidence:68 | model:MACRO-V2",
+    evidence_refs: [],
+    score: 0,
+    issuer: "mit-finance",
+    timestamp: 1775710900
+  } in
+  let delib = climate_impact.deliberate(claim, {}, 70) in
+  delib.action == "adjust"
+}
+
+test "climate adjusted: downward revision for high confidence" {
+  let adjusted = climate_impact.derive_climate_adjusted(
+    "SP500-Q1-2025",
+    "S&P 500 at 5800 | confidence:92 | model:EQUITY-V1",
+    "sha256:climate001"
+  ) in
+  str.starts_with(adjusted, "DOWNWARD REVISION REQUIRED")
+}
+
+test "climate adjusted: moderate risk for medium confidence" {
+  let adjusted = climate_impact.derive_climate_adjusted(
+    "GDP-Q1-2025",
+    "GDP growth 2.1% | confidence:68 | model:MACRO-V2",
+    "sha256:climate001"
+  ) in
+  str.starts_with(adjusted, "MODERATE CLIMATE RISK")
+}

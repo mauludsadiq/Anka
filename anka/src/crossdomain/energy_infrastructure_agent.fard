@@ -1,0 +1,137 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Energy Infrastructure Agent
+// Cross-domain: reads climate findings, witnesses those relevant to energy,
+// publishes energy impact assessments that cite climate findings by digest.
+//
+// Domain bridge: research.result.claims -> energy.impact.claims
+//
+// Deliberation:
+//   - Climate findings about temperature, sea level, extreme weather: witness + publish impact
+//   - Irrelevant climate findings: ignore
+//   - Already seen: ignore
+
+fn make_dalil(node_address) {
+  {
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let claims = list.fold(kd.known_digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              score: 0,
+              issuer: env.claim.issuer_node_id,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    post_node: fn(addr, path, body) {
+      let result = http.post(str.concat([addr, path]), json.encode(body)) in
+      if result.status == 200 then { ok: true, data: json.decode(result.body) }
+      else { ok: false }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn is_energy_relevant(finding) {
+  str.contains(finding, "temperature") ||
+  str.contains(finding, "sea level") ||
+  str.contains(finding, "arctic") ||
+  str.contains(finding, "Arctic") ||
+  str.contains(finding, "CO2") ||
+  str.contains(finding, "extreme weather")
+}
+
+fn derive_energy_impact(subject, climate_finding) {
+  if str.contains(climate_finding, "critical") || str.contains(climate_finding, "+1") then
+    str.concat(["CRITICAL ENERGY IMPACT from ", subject, ": infrastructure stress expected — ", climate_finding])
+  else if str.contains(climate_finding, "CO2") then
+    str.concat(["CARBON TRANSITION SIGNAL from ", subject, ": energy mix adjustment required — ", climate_finding])
+  else
+    str.concat(["ENERGY MONITORING from ", subject, ": ", climate_finding])
+}
+
+fn deliberate(claim, seen_digests) {
+  let digest = claim.digest_hex in
+  if rec.has(seen_digests, digest) then
+    { action: "ignore", reason: "already seen", digest: digest }
+  else if claim.claim_space != "research.result.claims" then
+    { action: "ignore", reason: "not a climate research claim", digest: digest }
+  else if is_energy_relevant(claim.finding) then
+    { action: "witness_and_impact", reason: "energy-relevant climate finding", digest: digest }
+  else
+    { action: "ignore", reason: "not energy-relevant", digest: digest }
+}
+
+fn run(node_address, institution, since_ts, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["research.result.claims"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let result = list.fold(feed.claims, { witnessed: 0, impacts_published: 0, ignored: 0, seen: {}, cross_domain_digests: [] }, fn(acc, claim) {
+      let delib = deliberate(claim, acc.seen) in
+      let next_seen = rec.set(acc.seen, claim.digest_hex, true) in
+      if delib.action == "witness_and_impact" then
+        let _ = dalil.post_node(node_address, "/witness", {
+          digest_hex: claim.digest_hex,
+          witness_node_id: str.concat([institution, "-energy-agent"]),
+          validation_type: "energy_impact_assessment",
+          timestamp_unix_secs: timestamp
+        }) in
+        let impact = derive_energy_impact(claim.subject, claim.finding) in
+        let published = dalil.compose(node_address, "energy.impact.claims", claim.subject,
+          impact, [claim.digest_hex], timestamp) in
+        {
+          witnessed: acc.witnessed + 1,
+          impacts_published: acc.impacts_published + 1,
+          ignored: acc.ignored,
+          seen: next_seen,
+          cross_domain_digests: list.append(acc.cross_domain_digests, {
+            climate_digest: claim.digest_hex,
+            impact_digest: published.digest_hex,
+            subject: claim.subject
+          })
+        }
+      else
+        { ...acc, ignored: acc.ignored + 1, seen: next_seen }
+    }) in
+    {
+      ok: true,
+      agent: "energy-infrastructure",
+      institution: institution,
+      observed: list.len(feed.claims),
+      witnessed: result.witnessed,
+      impacts_published: result.impacts_published,
+      cross_domain_digests: result.cross_domain_digests
+    }
+}
+
+export { make_dalil, is_energy_relevant, derive_energy_impact, deliberate, run }
