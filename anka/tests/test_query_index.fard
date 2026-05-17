@@ -1,0 +1,71 @@
+import("../src/query_index") as qi
+import("std/list") as list
+import("std/rec") as rec
+
+fn make_env(digest, claim_space, subject) {
+  {
+    digest_hex: digest,
+    claim: { claim_space: claim_space, subject: subject, object: "value",
+             issuer_node_id: "node-a", timestamp_unix_secs: 1000, evidence_refs: [] }
+  }
+}
+
+test "empty index has no spaces" {
+  let idx = qi.empty_index() in
+  list.len(qi.spaces(idx)) == 0
+}
+
+test "index claim makes it findable" {
+  let env = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let idx = qi.index_claim(qi.empty_index(), env) in
+  let digests = qi.lookup_digests(idx, "research.result.claims", "CO2-2024") in
+  list.len(digests) == 1 && list.head(digests) == "sha256:d1"
+}
+
+test "index multiple claims same subject" {
+  let e1 = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let e2 = make_env("sha256:d2", "research.result.claims", "CO2-2024") in
+  let idx = qi.index_claim(qi.index_claim(qi.empty_index(), e1), e2) in
+  list.len(qi.lookup_digests(idx, "research.result.claims", "CO2-2024")) == 2
+}
+
+test "index claim is idempotent" {
+  let env = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let idx = qi.index_claim(qi.index_claim(qi.empty_index(), env), env) in
+  list.len(qi.lookup_digests(idx, "research.result.claims", "CO2-2024")) == 1
+}
+
+test "lookup missing space returns empty" {
+  let idx = qi.empty_index() in
+  list.len(qi.lookup_digests(idx, "nonexistent.space", "subject")) == 0
+}
+
+test "index witness links to digest" {
+  let idx = qi.index_witness(qi.empty_index(), "witness-key-1", "sha256:d1") in
+  let witnesses = qi.lookup_witnesses(idx, "sha256:d1") in
+  list.len(witnesses) == 1
+}
+
+test "subjects in space lists all subjects" {
+  let e1 = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let e2 = make_env("sha256:d2", "research.result.claims", "temp-2024") in
+  let idx = qi.index_claim(qi.index_claim(qi.empty_index(), e1), e2) in
+  let subjects = qi.subjects_in_space(idx, "research.result.claims") in
+  list.len(subjects) == 2
+}
+
+test "different spaces are independent" {
+  let e1 = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let e2 = make_env("sha256:d2", "market.forecast.claims", "CO2-2024") in
+  let idx = qi.index_claim(qi.index_claim(qi.empty_index(), e1), e2) in
+  let r_digests = qi.lookup_digests(idx, "research.result.claims", "CO2-2024") in
+  let m_digests = qi.lookup_digests(idx, "market.forecast.claims", "CO2-2024") in
+  list.len(r_digests) == 1 && list.len(m_digests) == 1
+}
+
+test "claim count for subject" {
+  let e1 = make_env("sha256:d1", "research.result.claims", "CO2-2024") in
+  let e2 = make_env("sha256:d2", "research.result.claims", "CO2-2024") in
+  let idx = qi.index_claim(qi.index_claim(qi.empty_index(), e1), e2) in
+  qi.claim_count_for(idx, "research.result.claims", "CO2-2024") == 2
+}

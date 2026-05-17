@@ -25,6 +25,7 @@ import("reputation") as rep
 import("longitudinal") as lon
 import("lineage") as lin
 import("mesh_federation") as mf
+import("query_index") as qi
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -39,6 +40,7 @@ import("reputation") as rep
 import("longitudinal") as lon
 import("lineage") as lin
 import("mesh_federation") as mf
+import("query_index") as qi
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -148,7 +150,10 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let b2_state = b2.store_claim(b2_state, pub.envelope) in
     let b2_state = b2.record_op(b2_state, "anka.published", { claim_space: body.claim_space, issuer: state.node_id }, state.node_id, body.timestamp_unix_secs) in
     let pub = { ...pub, node: { ...pub.node, bay2_store: b2_state } } in
-    json_response(pub.node, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
+    let idx = rec.getOr(pub.node, "query_index", qi.empty_index()) in
+    let next_idx = qi.index_claim(idx, pub.envelope) in
+    let pub_node2 = rec.set(pub.node, "query_index", next_idx) in
+    json_response(pub_node2, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
   else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 7, str.len(req.path)) in
     if node.has_claim(state, digest) then
@@ -203,7 +208,10 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
       let b2_cur = if result.witness != null then b2.store_witness(b2_cur, result.witness) else b2_cur in
       let b2_cur = b2.record_op(b2_cur, "anka.witnessed", { digest_hex: body.digest_hex, witness: state.node_id }, state.node_id, body.timestamp_unix_secs) in
       let result = { ...result, node: { ...result.node, bay2_store: b2_cur } } in
-      json_response(result.node, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: body.digest_hex, witnessed: true })
+      let fidx = rec.getOr(result.node, "query_index", qi.empty_index()) in
+      let fidx2 = qi.index_witness(fidx, body.digest_hex, body.digest_hex) in
+      let result_node2 = rec.set(result.node, "query_index", fidx2) in
+      json_response(result_node2, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: body.digest_hex, witnessed: true })
     else
       json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
   else if req.path == "/witness" && req.method == "POST" then
@@ -215,6 +223,9 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let witness_claim_space = if witnessed_env != null then witnessed_env.claim.claim_space else "*" in
     let next_rep_w = rep.record_pass(rep_state_w, body.witness_node_id, witness_claim_space) in
     let next = rec.set(next, "reputation", next_rep_w) in
+    let widx = rec.getOr(next, "query_index", qi.empty_index()) in
+    let widx2 = qi.index_witness(widx, body.witness_node_id, body.digest_hex) in
+    let next = rec.set(next, "query_index", widx2) in
     let ledger = econ.reward_witness(ledger, body.witness_node_id, "anka.witness", body.digest_hex).ledger in
     json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
@@ -486,11 +497,15 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let parts = str.split(req.path, "/") in
     let claim_space = list.get(parts, 2) in
     let subject = list.get(parts, 3) in
-    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
-    let matching = list.filter(all_envelopes, fn(env) {
-      env.claim.claim_space == claim_space && env.claim.subject == subject
+    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
+    let matching_digests = qi.lookup_digests(idx, claim_space, subject) in
+    let matching = list.map(matching_digests, fn(d) { rec.getOr(state.claims, d, null) }) in
+    let matching = list.filter(matching, fn(env) { env != null }) in
+    let witness_keys = list.fold(matching_digests, [], fn(acc, d) {
+      list.concat([acc, qi.lookup_witnesses(idx, d)])
     }) in
-    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let all_witnesses = list.map(witness_keys, fn(k) { rec.getOr(state.witnesses, k, null) }) in
+    let all_witnesses = list.filter(all_witnesses, fn(w) { w != null }) in
     let rep_state = rec.getOr(state, "reputation", {}) in
     let cs = cset.assemble(claim_space, subject, matching, []) in
     let collapse_result = wc.collapse(cs, all_witnesses, rep_state, "single-winner") in
@@ -526,11 +541,15 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let parts = str.split(req.path, "/") in
     let claim_space = list.get(parts, 2) in
     let subject = list.get(parts, 3) in
-    let all_envelopes = list.map(rec.keys(state.claims), fn(k) { rec.get(state.claims, k) }) in
-    let matching = list.filter(all_envelopes, fn(env) {
-      env.claim.claim_space == claim_space && env.claim.subject == subject
+    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
+    let matching_digests = qi.lookup_digests(idx, claim_space, subject) in
+    let matching = list.map(matching_digests, fn(d) { rec.getOr(state.claims, d, null) }) in
+    let matching = list.filter(matching, fn(env) { env != null }) in
+    let witness_keys = list.fold(matching_digests, [], fn(acc, d) {
+      list.concat([acc, qi.lookup_witnesses(idx, d)])
     }) in
-    let all_witnesses = list.map(rec.keys(state.witnesses), fn(k) { rec.get(state.witnesses, k) }) in
+    let all_witnesses = list.map(witness_keys, fn(k) { rec.getOr(state.witnesses, k, null) }) in
+    let all_witnesses = list.filter(all_witnesses, fn(w) { w != null }) in
     let rep_state = rec.getOr(state, "reputation", {}) in
     let cs = cset.assemble(claim_space, subject, matching, []) in
     let collapse_result = wc.collapse(cs, all_witnesses, rep_state, "single-winner") in

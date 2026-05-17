@@ -1,0 +1,83 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Materialized Query Index
+// Maintains two indexes updated on every write:
+//   space_index:   claim_space -> subject -> [digest_hex, ...]
+//   witness_index: digest_hex -> [witness_key, ...]
+//
+// Query performance: O(1) lookup by space+subject instead of O(n) full scan.
+// Index is stored on state and persisted to SQLite with the rest of node state.
+
+fn empty_index() {
+  { space_index: {}, witness_index: {}, challenge_index: {} }
+}
+
+fn index_claim(idx, envelope) {
+  let cs = envelope.claim.claim_space in
+  let subj = envelope.claim.subject in
+  let digest = envelope.digest_hex in
+  let space_map = rec.getOr(idx.space_index, cs, {}) in
+  let subject_list = rec.getOr(space_map, subj, []) in
+  let next_subject_list = if list.any(subject_list, fn(d) { d == digest }) then
+    subject_list
+  else
+    list.append(subject_list, digest)
+  in
+  let next_space_map = rec.set(space_map, subj, next_subject_list) in
+  let next_space_index = rec.set(idx.space_index, cs, next_space_map) in
+  { ...idx, space_index: next_space_index }
+}
+
+fn index_witness(idx, witness_key, digest_hex) {
+  let witness_list = rec.getOr(idx.witness_index, digest_hex, []) in
+  let next_list = if list.any(witness_list, fn(k) { k == witness_key }) then
+    witness_list
+  else
+    list.append(witness_list, witness_key)
+  in
+  { ...idx, witness_index: rec.set(idx.witness_index, digest_hex, next_list) }
+}
+
+fn index_challenge(idx, challenge_key, target_digest_hex) {
+  let challenge_list = rec.getOr(idx.challenge_index, target_digest_hex, []) in
+  let next_list = if list.any(challenge_list, fn(k) { k == challenge_key }) then
+    challenge_list
+  else
+    list.append(challenge_list, challenge_key)
+  in
+  { ...idx, challenge_index: rec.set(idx.challenge_index, target_digest_hex, next_list) }
+}
+
+fn lookup_digests(idx, claim_space, subject) {
+  let space_map = rec.getOr(idx.space_index, claim_space, {}) in
+  rec.getOr(space_map, subject, [])
+}
+
+fn lookup_witnesses(idx, digest_hex) {
+  rec.getOr(idx.witness_index, digest_hex, [])
+}
+
+fn lookup_challenges(idx, digest_hex) {
+  rec.getOr(idx.challenge_index, digest_hex, [])
+}
+
+fn subjects_in_space(idx, claim_space) {
+  let space_map = rec.getOr(idx.space_index, claim_space, {}) in
+  rec.keys(space_map)
+}
+
+fn spaces(idx) {
+  rec.keys(idx.space_index)
+}
+
+fn claim_count_for(idx, claim_space, subject) {
+  list.len(lookup_digests(idx, claim_space, subject))
+}
+
+export {
+  empty_index, index_claim, index_witness, index_challenge,
+  lookup_digests, lookup_witnesses, lookup_challenges,
+  subjects_in_space, spaces, claim_count_for
+}
