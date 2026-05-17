@@ -21,6 +21,7 @@ import("economy") as econ
 import("rate_limit") as rl
 import("inheritance") as inh
 import("dispute_resolution") as dr
+import("reputation") as rep
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -31,6 +32,7 @@ import("economy") as econ
 import("rate_limit") as rl
 import("inheritance") as inh
 import("dispute_resolution") as dr
+import("reputation") as rep
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -202,6 +204,11 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let body = json.decode(req.body) in
     let next = node.receive_witness(state, body) in
     let arc2 = arch.record_claim_trail(arc, body.digest_hex, "witnessed", { witness: body.witness_node_id, validation_type: body.validation_type }, body.timestamp_unix_secs) in
+    let rep_state_w = rec.getOr(state, "reputation", rep.empty()) in
+    let witnessed_env = node.fetch_claim(state, body.digest_hex) in
+    let witness_claim_space = if witnessed_env != null then witnessed_env.claim.claim_space else "*" in
+    let next_rep_w = rep.record_pass(rep_state_w, body.witness_node_id, witness_claim_space) in
+    let next = rec.set(next, "reputation", next_rep_w) in
     let ledger = econ.reward_witness(ledger, body.witness_node_id, "anka.witness", body.digest_hex).ledger in
     json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
@@ -277,7 +284,16 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
       let next_dr = dr.store_resolution(dr.store_dispute(dr_store, dispute), record) in
       let next_state = rec.set(state, "dispute_store", next_dr) in
       let arc2 = arch.record_claim_trail(arc, target_digest, "dispute_resolved", { verdict: resolution.verdict, resolver: state.node_id, auto: resolution.auto_resolved }, now) in
-      json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, verdict: resolution.verdict, reason: resolution.reason, requires_human: resolution.requires_human, auto_resolved: resolution.auto_resolved, record: record })
+      let rep_state = rec.getOr(state, "reputation", rep.empty()) in
+      let claim_space_val = if dispute.claim_envelope != null then dispute.claim_envelope.claim.claim_space else "*" in
+      let issuer_id = if dispute.claim_envelope != null then dispute.claim_envelope.claim.issuer_node_id else "" in
+      let next_rep = if resolution.verdict == "UPHELD" then
+        rep.record_failure(rep_state, issuer_id, claim_space_val)
+      else if resolution.verdict == "OVERTURNED" then
+        rep.record_pass(rep_state, issuer_id, claim_space_val)
+      else rep_state in
+      let next_state2 = rec.set(next_state, "reputation", next_rep) in
+      json_response(next_state2, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, verdict: resolution.verdict, reason: resolution.reason, requires_human: resolution.requires_human, auto_resolved: resolution.auto_resolved, record: record, reputation_updated: resolution.verdict != "ESCALATED" })
   else if req.path == "/dispute/status" && req.method == "GET" then
     let dr_store = rec.getOr(state, "dispute_store", dr.empty_dispute_store()) in
     let summary = dr.dispute_summary(dr_store) in
@@ -331,6 +347,29 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
   else if req.path == "/capability/unlock" && req.method == "POST" then
     let next_state = rec.set(state, "capability_locked", false) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, locked: false })
+  else if req.path == "/reputation" && req.method == "GET" then
+    let rep_state = rec.getOr(state, "reputation", rep.empty()) in
+    let node_ids = rec.keys(rep_state) in
+    let scores = list.map(node_ids, fn(nid) {
+      let node_rep = rec.get(rep_state, nid) in
+      let spaces = rec.keys(node_rep) in
+      let space_scores = list.map(spaces, fn(cs) {
+        let s = rec.get(node_rep, cs) in
+        { claim_space: cs, score: s.score, passes: s.passes, failures: s.failures, witness_weight: rep.witness_weight(rep_state, nid, cs) }
+      }) in
+      { node_id: nid, claim_spaces: space_scores }
+    }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, reputation: scores, node_count: list.len(node_ids) })
+  else if str.starts_with(req.path, "/reputation/") && req.method == "GET" then
+    let node_id = str.slice(req.path, 12, str.len(req.path)) in
+    let rep_state = rec.getOr(state, "reputation", rep.empty()) in
+    let node_rep = rec.getOr(rep_state, node_id, {}) in
+    let spaces = rec.keys(node_rep) in
+    let space_scores = list.map(spaces, fn(cs) {
+      let s = rec.get(node_rep, cs) in
+      { claim_space: cs, score: s.score, passes: s.passes, failures: s.failures, witness_weight: rep.witness_weight(rep_state, node_id, cs) }
+    }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: node_id, claim_spaces: space_scores, total_score: list.fold(space_scores, 0, fn(acc, s) { acc + s.score }) })
   else if req.path == "/capabilities" && req.method == "GET" then
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
     json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, count: caps.capability_count(cap_store), open: caps.capability_count(cap_store) == 0 })

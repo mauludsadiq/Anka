@@ -1,33 +1,78 @@
 import("../src/reputation") as rep
+import("std/rec") as rec
 
-test "reputation records pass per claim space" {
-  let r0 = rep.empty() in
-  let r1 = rep.record_pass(r0, "node-A", "crypto") in
-  let s = rep.get_score(r1, "node-A", "crypto") in
-  s.passes == 1 && s.failures == 0 && s.score == 1
+let node_a = "ed25519:node-a-001"
+let node_b = "ed25519:node-b-002"
+let cs = "research.result.claims"
+
+test "empty reputation has default score" {
+  let r = rep.empty() in
+  let s = rep.get_score(r, node_a, cs) in
+  s.score == 0 && s.passes == 0 && s.failures == 0
 }
 
-test "reputation records failure per claim space" {
-  let r0 = rep.empty() in
-  let r1 = rep.record_failure(r0, "node-A", "crypto") in
-  let s = rep.get_score(r1, "node-A", "crypto") in
-  s.passes == 0 && s.failures == 1 && s.score == -1
+test "record pass increments score" {
+  let r = rep.record_pass(rep.empty(), node_a, cs) in
+  let s = rep.get_score(r, node_a, cs) in
+  s.score == 1 && s.passes == 1
 }
 
-test "witness weight increases with same-space reputation" {
-  let r0 = rep.empty() in
-  let r1 = rep.record_pass(rep.record_pass(r0, "node-A", "crypto"), "node-A", "crypto") in
-  rep.witness_weight(r1, "node-A", "crypto") == 3
+test "record failure decrements score" {
+  let r = rep.record_failure(rep.empty(), node_a, cs) in
+  let s = rep.get_score(r, node_a, cs) in
+  s.score == -1 && s.failures == 1
 }
 
-test "cross-space reputation is isolated" {
-  let r0 = rep.empty() in
-  let r1 = rep.record_pass(rep.record_pass(r0, "node-A", "crypto"), "node-A", "crypto") in
-  rep.witness_weight(r1, "node-A", "geopolitics") == 1
+test "multiple passes accumulate" {
+  let r = rep.record_pass(rep.record_pass(rep.record_pass(rep.empty(), node_a, cs), node_a, cs), node_a, cs) in
+  let s = rep.get_score(r, node_a, cs) in
+  s.score == 3 && s.passes == 3
 }
 
-test "negative reputation floors witness weight at zero" {
-  let r0 = rep.empty() in
-  let r1 = rep.record_failure(r0, "node-A", "crypto") in
-  rep.witness_weight(r1, "node-A", "crypto") == 0
+test "slash reduces score below zero" {
+  let r = rep.record_pass(rep.empty(), node_a, cs) in
+  let r2 = rep.record_failure(rep.record_failure(r, node_a, cs), node_a, cs) in
+  let s = rep.get_score(r2, node_a, cs) in
+  s.score == -1
+}
+
+test "witness weight is 1 for zero score" {
+  let r = rep.empty() in
+  rep.witness_weight(r, node_a, cs) == 1
+}
+
+test "witness weight grows with passes" {
+  let r = rep.record_pass(rep.record_pass(rep.empty(), node_a, cs), node_a, cs) in
+  rep.witness_weight(r, node_a, cs) == 3
+}
+
+test "witness weight is 0 for negative score" {
+  let r = rep.record_failure(rep.record_failure(rep.empty(), node_a, cs), node_a, cs) in
+  rep.witness_weight(r, node_a, cs) == 0
+}
+
+test "reputation is per claim space" {
+  let r = rep.record_pass(rep.empty(), node_a, cs) in
+  let s_cs = rep.get_score(r, node_a, cs) in
+  let s_other = rep.get_score(r, node_a, "market.forecast.claims") in
+  s_cs.score == 1 && s_other.score == 0
+}
+
+test "reputation is per node" {
+  let r = rep.record_pass(rep.empty(), node_a, cs) in
+  let s_a = rep.get_score(r, node_a, cs) in
+  let s_b = rep.get_score(r, node_b, cs) in
+  s_a.score == 1 && s_b.score == 0
+}
+
+test "high reputation witness outweighs low reputation" {
+  let r = rep.record_pass(rep.record_pass(rep.record_pass(rep.empty(), node_a, cs), node_a, cs), node_a, cs) in
+  let w_a = rep.witness_weight(r, node_a, cs) in
+  let w_b = rep.witness_weight(r, node_b, cs) in
+  w_a > w_b
+}
+
+test "slashed node has zero witness weight" {
+  let r = rep.record_failure(rep.record_failure(rep.record_failure(rep.empty(), node_a, cs), node_a, cs), node_a, cs) in
+  rep.witness_weight(r, node_a, cs) == 0
 }
