@@ -19,6 +19,7 @@ import("bay2_store") as b2
 import("capability_store") as caps
 import("economy") as econ
 import("rate_limit") as rl
+import("inheritance") as inh
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -27,6 +28,7 @@ import("bay2_store") as b2
 import("capability_store") as caps
 import("economy") as econ
 import("rate_limit") as rl
+import("inheritance") as inh
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -255,6 +257,49 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
     let next_state = rec.set(state, "capability_store", next_store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if req.path == "/inherit/snapshot" && req.method == "GET" then
+    let known = state.known_digests in
+    let snapshot = inh.make_snapshot(state.node_id, list.dedupe(known), now) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, snapshot: snapshot })
+  else if req.path == "/inherit/declare" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let snapshot = body.snapshot in
+    let declaration = inh.make_inheritance_declaration(body.predecessor_node_id, state.node_id, snapshot, now) in
+    let inh_store = rec.getOr(state, "inheritance_store", inh.empty_inheritance_store()) in
+    let next_inh = inh.store_declaration(inh_store, declaration) in
+    let next_state = rec.set(state, "inheritance_store", next_inh) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, declaration: declaration, completeness: inh.inheritance_completeness(declaration) })
+  else if req.path == "/inherit/witness" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let inh_store = rec.getOr(state, "inheritance_store", inh.empty_inheritance_store()) in
+    let declaration = inh.get_declaration(inh_store, body.declaration_digest) in
+    if declaration == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "declaration not found")
+    else
+      let next_decl = inh.witness_prior_claim(declaration, body.digest_hex, body.reasoning) in
+      let next_inh = inh.store_declaration(inh_store, next_decl) in
+      let next_state = rec.set(state, "inheritance_store", next_inh) in
+      json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, completeness: inh.inheritance_completeness(next_decl) })
+  else if req.path == "/inherit/repudiate" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let inh_store = rec.getOr(state, "inheritance_store", inh.empty_inheritance_store()) in
+    let declaration = inh.get_declaration(inh_store, body.declaration_digest) in
+    if declaration == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "declaration not found")
+    else
+      let next_decl = inh.repudiate_prior_claim(declaration, body.digest_hex, body.reasoning) in
+      let record = inh.make_repudiation_record(state.node_id, body.digest_hex, body.reasoning, now) in
+      let next_inh = inh.store_repudiation(inh.store_declaration(inh_store, next_decl), record) in
+      let next_state = rec.set(state, "inheritance_store", next_inh) in
+      json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, record: record, completeness: inh.inheritance_completeness(next_decl) })
+  else if req.path == "/inherit/status" && req.method == "GET" then
+    let inh_store = rec.getOr(state, "inheritance_store", inh.empty_inheritance_store()) in
+    let decl_keys = rec.keys(inh_store.declarations) in
+    let declarations = list.map(decl_keys, fn(k) {
+      let d = rec.get(inh_store.declarations, k) in
+      { ...inh.inheritance_completeness(d), declaration_digest: d.declaration_digest, predecessor: d.predecessor_node_id, successor: d.successor_node_id }
+    }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, declarations: declarations, declaration_count: list.len(declarations) })
   else if req.path == "/capability/lock" && req.method == "POST" then
     let next_state = rec.set(state, "capability_locked", true) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, locked: true })

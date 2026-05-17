@@ -1,0 +1,161 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+import("claim") as claim
+import("keypair") as kp
+
+// Epistemic Inheritance Protocol
+// When a model is retrained, the new agent reads the predecessor's full claim history.
+// It then explicitly witnesses (affirms) or repudiates (rejects) each prior stance.
+// This creates a formal epistemic handoff — no discontinuity, no silent abandonment.
+//
+// Inheritance record:
+//   predecessor_node_id:  the retiring agent's node_id
+//   successor_node_id:    the new agent's node_id
+//   snapshot_digest:      content-addressed hash of the full prior claim set
+//   witnessed_digests:    claims the new agent affirms
+//   repudiated_digests:   claims the new agent rejects
+//   timestamp_unix_secs:  when the handoff occurred
+//
+// A claim with no inheritance action is implicitly pending.
+// Pending claims reduce the successor's epistemic authority score.
+
+fn make_snapshot(predecessor_node_id, claim_digests, timestamp_unix_secs) {
+  let snapshot_content = json.canonicalize({
+    predecessor_node_id: predecessor_node_id,
+    claim_digests: claim_digests,
+    timestamp_unix_secs: timestamp_unix_secs
+  }) in
+  {
+    predecessor_node_id: predecessor_node_id,
+    claim_digests: claim_digests,
+    claim_count: list.len(claim_digests),
+    snapshot_digest: hash.sha256_text(snapshot_content),
+    timestamp_unix_secs: timestamp_unix_secs
+  }
+}
+
+fn make_inheritance_declaration(predecessor_node_id, successor_node_id, snapshot, timestamp_unix_secs) {
+  let content = json.canonicalize({
+    predecessor_node_id: predecessor_node_id,
+    successor_node_id: successor_node_id,
+    snapshot_digest: snapshot.snapshot_digest,
+    claim_count: snapshot.claim_count,
+    timestamp_unix_secs: timestamp_unix_secs
+  }) in
+  {
+    kind: "inheritance_declaration",
+    predecessor_node_id: predecessor_node_id,
+    successor_node_id: successor_node_id,
+    snapshot_digest: snapshot.snapshot_digest,
+    claim_count: snapshot.claim_count,
+    declaration_digest: hash.sha256_text(content),
+    timestamp_unix_secs: timestamp_unix_secs,
+    witnessed_digests: [],
+    repudiated_digests: [],
+    pending_digests: snapshot.claim_digests
+  }
+}
+
+fn witness_prior_claim(declaration, digest_hex, reasoning) {
+  let already_witnessed = list.any(declaration.witnessed_digests, fn(d) { d == digest_hex }) in
+  let already_repudiated = list.any(declaration.repudiated_digests, fn(d) { d == digest_hex }) in
+  if already_witnessed || already_repudiated then declaration
+  else
+    let next_witnessed = list.append(declaration.witnessed_digests, digest_hex) in
+    let next_pending = list.filter(declaration.pending_digests, fn(d) { d != digest_hex }) in
+    { ...declaration, witnessed_digests: next_witnessed, pending_digests: next_pending }
+}
+
+fn repudiate_prior_claim(declaration, digest_hex, reasoning) {
+  let already_witnessed = list.any(declaration.witnessed_digests, fn(d) { d == digest_hex }) in
+  let already_repudiated = list.any(declaration.repudiated_digests, fn(d) { d == digest_hex }) in
+  if already_witnessed || already_repudiated then declaration
+  else
+    let next_repudiated = list.append(declaration.repudiated_digests, digest_hex) in
+    let next_pending = list.filter(declaration.pending_digests, fn(d) { d != digest_hex }) in
+    { ...declaration, repudiated_digests: next_repudiated, pending_digests: next_pending }
+}
+
+fn inheritance_completeness(declaration) {
+  let total = declaration.claim_count in
+  let acted = list.len(declaration.witnessed_digests) + list.len(declaration.repudiated_digests) in
+  let pending = list.len(declaration.pending_digests) in
+  {
+    total: total,
+    witnessed: list.len(declaration.witnessed_digests),
+    repudiated: list.len(declaration.repudiated_digests),
+    pending: pending,
+    complete: pending == 0,
+    completeness_pct: if total == 0 then 100 else acted * 100 / total
+  }
+}
+
+fn is_complete(declaration) {
+  list.len(declaration.pending_digests) == 0
+}
+
+fn make_repudiation_record(successor_node_id, digest_hex, reasoning, timestamp_unix_secs) {
+  {
+    kind: "repudiation",
+    successor_node_id: successor_node_id,
+    repudiated_digest: digest_hex,
+    reasoning: reasoning,
+    timestamp_unix_secs: timestamp_unix_secs,
+    record_digest: hash.sha256_text(json.canonicalize({
+      successor_node_id: successor_node_id,
+      repudiated_digest: digest_hex,
+      reasoning: reasoning,
+      timestamp_unix_secs: timestamp_unix_secs
+    }))
+  }
+}
+
+fn empty_inheritance_store() {
+  { declarations: {}, repudiations: {}, snapshots: {} }
+}
+
+fn store_declaration(inh_store, declaration) {
+  { ...inh_store, declarations: rec.set(inh_store.declarations, declaration.declaration_digest, declaration) }
+}
+
+fn store_repudiation(inh_store, record) {
+  { ...inh_store, repudiations: rec.set(inh_store.repudiations, record.record_digest, record) }
+}
+
+fn get_declaration(inh_store, declaration_digest) {
+  rec.getOr(inh_store.declarations, declaration_digest, null)
+}
+
+fn declarations_for_successor(inh_store, successor_node_id) {
+  let keys = rec.keys(inh_store.declarations) in
+  list.filter(keys, fn(k) {
+    let d = rec.get(inh_store.declarations, k) in
+    d.successor_node_id == successor_node_id
+  })
+}
+
+fn repudiations_by_successor(inh_store, successor_node_id) {
+  let keys = rec.keys(inh_store.repudiations) in
+  list.filter(list.map(keys, fn(k) { rec.get(inh_store.repudiations, k) }), fn(r) {
+    r.successor_node_id == successor_node_id
+  })
+}
+
+export {
+  make_snapshot,
+  make_inheritance_declaration,
+  witness_prior_claim,
+  repudiate_prior_claim,
+  inheritance_completeness,
+  is_complete,
+  make_repudiation_record,
+  empty_inheritance_store,
+  store_declaration,
+  store_repudiation,
+  get_declaration,
+  declarations_for_successor,
+  repudiations_by_successor
+}

@@ -1,0 +1,104 @@
+import("../src/inheritance") as inh
+import("std/list") as list
+import("std/str") as str
+import("std/rec") as rec
+
+let predecessor_id = "ed25519:predecessor-node-001"
+let successor_id = "ed25519:successor-node-002"
+let digests = ["sha256:claim001", "sha256:claim002", "sha256:claim003", "sha256:claim004", "sha256:claim005"]
+
+test "snapshot captures all claim digests" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  snap.claim_count == 5 && list.len(snap.claim_digests) == 5
+}
+
+test "snapshot digest is stable" {
+  let s1 = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let s2 = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  s1.snapshot_digest == s2.snapshot_digest
+}
+
+test "different snapshots produce different digests" {
+  let s1 = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let s2 = inh.make_snapshot(predecessor_id, ["sha256:other001"], 1775710900) in
+  s1.snapshot_digest != s2.snapshot_digest
+}
+
+test "declaration starts with all claims pending" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let completeness = inh.inheritance_completeness(decl) in
+  completeness.pending == 5 && completeness.witnessed == 0 && completeness.repudiated == 0
+}
+
+test "witnessing a claim moves it from pending" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let decl2 = inh.witness_prior_claim(decl, "sha256:claim001", "affirmed by successor") in
+  let c = inh.inheritance_completeness(decl2) in
+  c.witnessed == 1 && c.pending == 4
+}
+
+test "repudiating a claim moves it from pending" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let decl2 = inh.repudiate_prior_claim(decl, "sha256:claim003", "new evidence contradicts") in
+  let c = inh.inheritance_completeness(decl2) in
+  c.repudiated == 1 && c.pending == 4
+}
+
+test "cannot witness same claim twice" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let decl2 = inh.witness_prior_claim(decl, "sha256:claim001", "first") in
+  let decl3 = inh.witness_prior_claim(decl2, "sha256:claim001", "second") in
+  list.len(decl3.witnessed_digests) == 1
+}
+
+test "cannot witness already-repudiated claim" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let decl2 = inh.repudiate_prior_claim(decl, "sha256:claim001", "rejected") in
+  let decl3 = inh.witness_prior_claim(decl2, "sha256:claim001", "trying to affirm") in
+  list.len(decl3.witnessed_digests) == 0 && list.len(decl3.repudiated_digests) == 1
+}
+
+test "full inheritance: witness all claims produces complete declaration" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let final_decl = list.fold(digests, decl, fn(acc, d) {
+    inh.witness_prior_claim(acc, d, "affirmed")
+  }) in
+  inh.is_complete(final_decl) && inh.inheritance_completeness(final_decl).completeness_pct == 100
+}
+
+test "mixed inheritance: witness some repudiate others" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let decl2 = inh.witness_prior_claim(decl, "sha256:claim001", "affirmed") in
+  let decl3 = inh.witness_prior_claim(decl2, "sha256:claim002", "affirmed") in
+  let decl4 = inh.repudiate_prior_claim(decl3, "sha256:claim003", "contradicted by new data") in
+  let decl5 = inh.witness_prior_claim(decl4, "sha256:claim004", "affirmed") in
+  let decl6 = inh.repudiate_prior_claim(decl5, "sha256:claim005", "methodology flawed") in
+  let c = inh.inheritance_completeness(decl6) in
+  inh.is_complete(decl6) && c.witnessed == 3 && c.repudiated == 2 && c.pending == 0
+}
+
+test "repudiation record is content-addressed" {
+  let r1 = inh.make_repudiation_record(successor_id, "sha256:claim001", "contradicted", 1775710900) in
+  let r2 = inh.make_repudiation_record(successor_id, "sha256:claim001", "contradicted", 1775710900) in
+  r1.record_digest == r2.record_digest
+}
+
+test "inheritance store starts empty" {
+  let store = inh.empty_inheritance_store() in
+  list.len(rec.keys(store.declarations)) == 0
+}
+
+test "store and retrieve declaration" {
+  let snap = inh.make_snapshot(predecessor_id, digests, 1775710900) in
+  let decl = inh.make_inheritance_declaration(predecessor_id, successor_id, snap, 1775710900) in
+  let store = inh.store_declaration(inh.empty_inheritance_store(), decl) in
+  let retrieved = inh.get_declaration(store, decl.declaration_digest) in
+  retrieved != null && retrieved.successor_node_id == successor_id
+}
