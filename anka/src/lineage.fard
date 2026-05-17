@@ -1,0 +1,124 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// Model Lineage Tracking
+// Every model that publishes claims has a model.training.trace entry.
+// Training data provenance linked to dataset.provenance claims.
+// Output claims linked back to training trace via evidence_refs.
+//
+// Lineage chain (bottom-up):
+//   dataset.provenance          <- raw data source
+//     <- model.training.trace   <- training run citing dataset
+//       <- research.result.*    <- output claim citing training trace
+
+fn classify_claim(envelope) {
+  let cs = envelope.claim.claim_space in
+  if cs == "model.training.trace" then "training_trace"
+  else if cs == "dataset.provenance" then "dataset"
+  else if cs == "reproducibility.results" then "replication"
+  else if str.contains(cs, "research") || str.contains(cs, "result") then "output_claim"
+  else "other"
+}
+
+fn make_lineage_node(envelope, depth, kind) {
+  {
+    digest_hex: envelope.digest_hex,
+    claim_space: envelope.claim.claim_space,
+    subject: envelope.claim.subject,
+    value: envelope.claim.object,
+    issuer_node_id: envelope.claim.issuer_node_id,
+    timestamp_unix_secs: envelope.claim.timestamp_unix_secs,
+    evidence_refs: envelope.claim.evidence_refs,
+    depth: depth,
+    kind: kind
+  }
+}
+
+fn resolve_lineage(claims_map, digest_hex, max_depth) {
+  let initial = { queue: [{ digest: digest_hex, depth: 0 }], visited: {}, chain: [] } in
+  let steps = list.range(0, max_depth * 10) in
+  let result = list.fold(steps, initial, fn(state, _) {
+    if list.len(state.queue) == 0 then state
+    else
+      let item = list.head(state.queue) in
+      let rest = list.tail(state.queue) in
+      if rec.has(state.visited, item.digest) then
+        { ...state, queue: rest }
+      else if item.depth >= max_depth then
+        { ...state, queue: rest }
+      else
+        let envelope = rec.getOr(claims_map, item.digest, null) in
+        if envelope == null then
+          { ...state, queue: rest }
+        else
+          let kind = classify_claim(envelope) in
+          let node = make_lineage_node(envelope, item.depth, kind) in
+          let anka_refs = list.filter(envelope.claim.evidence_refs, fn(r) {
+            str.starts_with(r, "sha256:")
+          }) in
+          let new_queue = list.map(anka_refs, fn(r) { { digest: r, depth: item.depth + 1 } }) in
+          {
+            visited: rec.set(state.visited, item.digest, true),
+            queue: list.concat([rest, new_queue]),
+            chain: list.append(state.chain, node)
+          }
+  }) in
+  result.chain
+}
+
+fn lineage_summary(chain) {
+  let datasets = list.filter(chain, fn(n) { n.kind == "dataset" }) in
+  let traces = list.filter(chain, fn(n) { n.kind == "training_trace" }) in
+  let outputs = list.filter(chain, fn(n) { n.kind == "output_claim" }) in
+  let replications = list.filter(chain, fn(n) { n.kind == "replication" }) in
+  {
+    total_nodes: list.len(chain),
+    datasets: list.len(datasets),
+    training_traces: list.len(traces),
+    output_claims: list.len(outputs),
+    replications: list.len(replications),
+    max_depth: list.fold(chain, 0, fn(acc, n) { if n.depth > acc then n.depth else acc }),
+    has_dataset_provenance: list.len(datasets) > 0,
+    has_training_trace: list.len(traces) > 0,
+    complete: list.len(datasets) > 0 && list.len(traces) > 0
+  }
+}
+
+fn find_outputs_for_model(claims_map, model_trace_digest) {
+  let all_digests = rec.keys(claims_map) in
+  list.filter(all_digests, fn(d) {
+    let env = rec.get(claims_map, d) in
+    list.any(env.claim.evidence_refs, fn(ref) { ref == model_trace_digest })
+  })
+}
+
+fn model_lineage_report(claims_map, model_id, max_depth) {
+  let all_digests = rec.keys(claims_map) in
+  let trace_digests = list.filter(all_digests, fn(d) {
+    let env = rec.get(claims_map, d) in
+    env.claim.claim_space == "model.training.trace" && env.claim.subject == model_id
+  }) in
+  if list.len(trace_digests) == 0 then
+    { ok: false, reason: str.concat(["no training trace found for model: ", model_id]) }
+  else
+    let trace_digest = list.head(trace_digests) in
+    let upstream_chain = resolve_lineage(claims_map, trace_digest, max_depth) in
+    let output_digests = find_outputs_for_model(claims_map, trace_digest) in
+    let upstream_summary = lineage_summary(upstream_chain) in
+    {
+      ok: true,
+      model_id: model_id,
+      trace_digest: trace_digest,
+      upstream: { chain: upstream_chain, summary: upstream_summary },
+      downstream: { output_count: list.len(output_digests), output_digests: output_digests },
+      complete_lineage: upstream_summary.complete
+    }
+}
+
+export {
+  classify_claim, make_lineage_node, resolve_lineage,
+  lineage_summary, find_outputs_for_model, model_lineage_report
+}

@@ -1,0 +1,114 @@
+import("../src/lineage") as lin
+import("std/list") as list
+import("std/rec") as rec
+import("std/str") as str
+
+fn make_env(digest, claim_space, subject, value, refs) {
+  {
+    digest_hex: digest,
+    claim: {
+      claim_space: claim_space,
+      subject: subject,
+      object: value,
+      issuer_node_id: "test-node",
+      timestamp_unix_secs: 1000,
+      evidence_refs: refs
+    }
+  }
+}
+
+test "classify dataset provenance" {
+  let env = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 dataset", []) in
+  lin.classify_claim(env) == "dataset"
+}
+
+test "classify training trace" {
+  let env = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training run", []) in
+  lin.classify_claim(env) == "training_trace"
+}
+
+test "classify output claim" {
+  let env = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", []) in
+  lin.classify_claim(env) == "output_claim"
+}
+
+test "classify replication" {
+  let env = make_env("sha256:d4", "reproducibility.results", "CO2", "confirmed", []) in
+  lin.classify_claim(env) == "replication"
+}
+
+test "resolve lineage: single node no refs" {
+  let env = make_env("sha256:d1", "research.result.claims", "CO2", "421ppm", []) in
+  let claims = { "sha256:d1": env } in
+  let chain = lin.resolve_lineage(claims, "sha256:d1", 5) in
+  list.len(chain) == 1
+}
+
+test "resolve lineage: two level chain" {
+  let dataset = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 data", []) in
+  let output = make_env("sha256:d2", "research.result.claims", "CO2", "421ppm", ["sha256:d1"]) in
+  let claims = { "sha256:d1": dataset, "sha256:d2": output } in
+  let chain = lin.resolve_lineage(claims, "sha256:d2", 5) in
+  list.len(chain) == 2
+}
+
+test "resolve lineage: three level chain" {
+  let dataset = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 data", []) in
+  let trace = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training", ["sha256:d1"]) in
+  let output = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", ["sha256:d2"]) in
+  let claims = { "sha256:d1": dataset, "sha256:d2": trace, "sha256:d3": output } in
+  let chain = lin.resolve_lineage(claims, "sha256:d3", 5) in
+  list.len(chain) == 3
+}
+
+test "lineage summary counts correctly" {
+  let dataset = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 data", []) in
+  let trace = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training", ["sha256:d1"]) in
+  let output = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", ["sha256:d2"]) in
+  let claims = { "sha256:d1": dataset, "sha256:d2": trace, "sha256:d3": output } in
+  let chain = lin.resolve_lineage(claims, "sha256:d3", 5) in
+  let summary = lin.lineage_summary(chain) in
+  summary.datasets == 1 && summary.training_traces == 1 && summary.output_claims == 1
+}
+
+test "lineage summary: complete when has dataset and trace" {
+  let dataset = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 data", []) in
+  let trace = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training", ["sha256:d1"]) in
+  let output = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", ["sha256:d2"]) in
+  let claims = { "sha256:d1": dataset, "sha256:d2": trace, "sha256:d3": output } in
+  let chain = lin.resolve_lineage(claims, "sha256:d3", 5) in
+  let summary = lin.lineage_summary(chain) in
+  summary.complete
+}
+
+test "lineage summary: incomplete when no dataset" {
+  let trace = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training", []) in
+  let output = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", ["sha256:d2"]) in
+  let claims = { "sha256:d2": trace, "sha256:d3": output } in
+  let chain = lin.resolve_lineage(claims, "sha256:d3", 5) in
+  let summary = lin.lineage_summary(chain) in
+  !summary.complete
+}
+
+test "find outputs for model" {
+  let trace = make_env("sha256:d1", "model.training.trace", "CLIMATE-V1", "training", []) in
+  let output = make_env("sha256:d2", "research.result.claims", "CO2", "421ppm", ["sha256:d1"]) in
+  let claims = { "sha256:d1": trace, "sha256:d2": output } in
+  let outputs = lin.find_outputs_for_model(claims, "sha256:d1") in
+  list.len(outputs) == 1
+}
+
+test "model lineage report: not found for unknown model" {
+  let claims = {} in
+  let report = lin.model_lineage_report(claims, "UNKNOWN-MODEL", 5) in
+  !report.ok
+}
+
+test "model lineage report: complete chain" {
+  let dataset = make_env("sha256:d1", "dataset.provenance", "ERA5", "ERA5 data", []) in
+  let trace = make_env("sha256:d2", "model.training.trace", "CLIMATE-V1", "training", ["sha256:d1"]) in
+  let output = make_env("sha256:d3", "research.result.claims", "CO2", "421ppm", ["sha256:d2"]) in
+  let claims = { "sha256:d1": dataset, "sha256:d2": trace, "sha256:d3": output } in
+  let report = lin.model_lineage_report(claims, "CLIMATE-V1", 5) in
+  report.ok && report.complete_lineage && report.downstream.output_count == 1
+}

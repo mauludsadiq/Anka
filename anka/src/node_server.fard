@@ -23,6 +23,7 @@ import("inheritance") as inh
 import("dispute_resolution") as dr
 import("reputation") as rep
 import("longitudinal") as lon
+import("lineage") as lin
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -35,6 +36,7 @@ import("inheritance") as inh
 import("dispute_resolution") as dr
 import("reputation") as rep
 import("longitudinal") as lon
+import("lineage") as lin
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -268,6 +270,15 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
     let next_state = rec.set(state, "capability_store", next_store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if str.starts_with(req.path, "/lineage/model/") && req.method == "GET" then
+    let model_id = str.slice(req.path, 15, str.len(req.path)) in
+    let report = lin.model_lineage_report(state.claims, model_id, 5) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: report.ok, report: report })
+  else if str.starts_with(req.path, "/lineage/") && req.method == "GET" then
+    let digest = str.slice(req.path, 9, str.len(req.path)) in
+    let chain = lin.resolve_lineage(state.claims, digest, 5) in
+    let summary = lin.lineage_summary(chain) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, digest: digest, chain: chain, summary: summary })
   else if str.starts_with(req.path, "/longitudinal/") && req.method == "GET" then
     let rest = str.slice(req.path, 14, str.len(req.path)) in
     let parts = str.split(rest, "/") in
