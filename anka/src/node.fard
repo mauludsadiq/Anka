@@ -137,8 +137,7 @@ fn new_node_with_identity(node_id, private_key_hex, public_key_hex) {
     claims: {},
     witnesses: {},
     challenges: {},
-    known_digests: [],
-    bay2_store: null
+    known_digests: []
   }
 }
 
