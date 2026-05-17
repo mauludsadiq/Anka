@@ -20,8 +20,8 @@ fn shard_sub_empty() {
 }
 
 fn shard_sub_add_space(sub, claim_space) {
-  let next = sg.subscription_add({ spaces: sub.spaces, spaces: sub.spaces }, claim_space) in
-  { ...sub, spaces: next.spaces }
+  if list.any(sub.spaces, fn(s) { s == claim_space }) then sub
+  else { ...sub, spaces: list.append(sub.spaces, claim_space) }
 }
 
 fn shard_sub_add_shard(sub, shard_key_prefix) {

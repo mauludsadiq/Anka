@@ -5,11 +5,13 @@ import("std/str") as str
 import("std/list") as list
 import("std/promise") as promise
 import("std/http") as http
+import("std/process") as process
 import("node") as node
 import("dialer") as dialer
 import("fetch_pipeline") as pipeline
 import("registry_gossip") as rg
 import("scoped_gossip") as sg
+import("shard_gossip") as shg
 import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
@@ -28,12 +30,12 @@ import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
-fn json_response(state, peers, local_address, registry, subscriptions, arc, ledger, data) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, next_ledger: ledger, response: { status: 200, body: json.encode(data), "content-type": "application/json" } }
+fn json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, data) {
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_shard_subs: shard_subs, next_archive: arc, next_ledger: ledger, response: { status: 200, body: json.encode(data), "content-type": "application/json" } }
 }
 
-fn error_response(state, peers, local_address, registry, subscriptions, arc, ledger, code, reason) {
-  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, next_ledger: ledger, response: { status: code, body: json.encode({ ok: false, reason: reason }), "content-type": "application/json" } }
+fn error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, code, reason) {
+  { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_shard_subs: shard_subs, next_archive: arc, next_ledger: ledger, response: { status: code, body: json.encode({ ok: false, reason: reason }), "content-type": "application/json" } }
 }
 
 fn has_sender(body) {
@@ -44,22 +46,22 @@ fn in_scope(subscriptions, claim_space) {
   list.len(subscriptions) == 0 || list.any(subscriptions, fn(s) { s == "*" || s == claim_space })
 }
 
-fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req) {
+fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, req) {
   let now = dt.now() in
   let limits = rl.default_limits() in
   let rate_counts = rec.getOr(state, "rate_counts", {}) in
   if req.path == "/health" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, node_id: state.node_id })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: state.node_id })
   else if req.path == "/known" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
   else if req.path == "/sync" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
   else if req.path == "/audit" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, snapshot_count: arch.snapshot_count(arc), receipt_count: list.len(arc.receipt_log) })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, snapshot_count: arch.snapshot_count(arc), receipt_count: list.len(arc.receipt_log) })
   else if str.starts_with(req.path, "/audit/trail/local/") && req.method == "GET" then
     let digest = str.slice(req.path, 19, str.len(req.path)) in
     let history = arch.reconstruct_claim_history(arc, digest) in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, digest_hex: digest, history: history })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, digest_hex: digest, history: history })
   else if str.starts_with(req.path, "/audit/trail/") && req.method == "GET" then
     let digest = str.slice(req.path, 13, str.len(req.path)) in
     let local_history = arch.reconstruct_claim_history(arc, digest) in
@@ -81,74 +83,104 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
     let pub_count = list.len(list.filter(all_trail, fn(e) { e.event_kind == "published" })) in
     let cha_count = list.len(list.filter(all_trail, fn(e) { e.event_kind == "challenged" })) in
     let merged = { trail: all_trail, published_count: pub_count, witness_count: wit_count, challenge_count: cha_count, reconstructable: local_history.reconstructable } in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, digest_hex: digest, history: merged })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, digest_hex: digest, history: merged })
   else if req.path == "/subscriptions" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, subscriptions: subscriptions })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, subscriptions: subscriptions })
   else if req.path == "/subscribe" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next_subs = if rec.has(body, "spaces") then body.spaces else [body.claim_space] in
-    json_response(state, peers, local_address, registry, next_subs, arc, ledger, { ok: true, subscriptions: next_subs })
+    json_response(state, peers, local_address, registry, next_subs, shard_subs, arc, ledger, { ok: true, subscriptions: next_subs })
   else if req.path == "/registry" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, registry: registry, registry_digest_hex: rg.make_registry_gossip(registry, state.node_id, 0).registry_digest_hex, known_spaces: rg.make_registry_gossip(registry, state.node_id, 0).known_spaces })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, registry: registry, registry_digest_hex: rg.make_registry_gossip(registry, state.node_id, 0).registry_digest_hex, known_spaces: rg.make_registry_gossip(registry, state.node_id, 0).known_spaces })
   else if req.path == "/registry/gossip" && req.method == "POST" then
     let body = json.decode(req.body) in
     let is_newer = rg.registry_gossip_newer(body, registry) in
     let _ = if is_newer && has_sender(body) then
-      promise.spawn(fn() { http.post(str.concat([local_address, "/registry/fetch"]), json.encode({ sender_address: body.sender_address })) })
+      promise.spawn(fn() {
+        process.capture("curl", ["-s", "-m", "5", "-X", "POST",
+          "-H", "Content-Type: application/json",
+          "-d", json.encode({ sender_address: body.sender_address }),
+          str.concat([local_address, "/registry/fetch"])])
+      })
     else null in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, is_newer: is_newer, current_version: registry.version, gossip_version: body.version })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, is_newer: is_newer, current_version: registry.version, gossip_version: body.version })
   else if req.path == "/registry/fetch" && req.method == "POST" then
     let body = json.decode(req.body) in
     let fetch_result = rg.fetch_registry(body.sender_address) in
     if fetch_result.ok then
       let update = rg.apply_registry_update(registry, fetch_result.registry) in
       if update.updated then
-        json_response(state, peers, local_address, update.registry, subscriptions, arc, ledger, { ok: true, updated: true, new_spaces: update.new_spaces, version: update.registry.version })
+        json_response(state, peers, local_address, update.registry, subscriptions, shard_subs, arc, ledger, { ok: true, updated: true, new_spaces: update.new_spaces, version: update.registry.version })
       else
-        json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, updated: false, reason: update.reason })
+        json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, updated: false, reason: update.reason })
     else
-      json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: false, reason: fetch_result.reason })
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: false, reason: fetch_result.reason })
   else if req.path == "/publish" && req.method == "POST" then
     let rate_check = rl.check_and_increment(limits.publish, rate_counts, state.node_id, now) in
     if !rate_check.allowed then
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 429, "rate limit exceeded: publish")
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 429, "rate limit exceeded: publish")
     else
     let body = json.decode(req.body) in
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
     let cap_check = if caps.capability_count(cap_store) == 0 then { allowed: true }
       else caps.check_capability(cap_store, state.node_id, body.claim_space, "publish", now) in
     if !cap_check.allowed then
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 403, str.concat(["capability required: ", body.claim_space]))
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 403, str.concat(["capability required: ", body.claim_space]))
     else
     let charge = econ.charge_publish(ledger, state.node_id, body.claim_space, list.len(body.evidence_refs)) in
     let ledger = if charge.ok then charge.ledger else ledger in
     let pub = node.publish(state, body.claim_space, body.subject, body.predicate, body.object, body.evidence_refs, body.timestamp_unix_secs) in
-    let _ = dialer.broadcast_gossip(peers, pub.gossip, local_address) in
     let arc2 = arch.record_claim_trail(arc, pub.envelope.digest_hex, "published", { issuer: state.node_id, claim_space: body.claim_space }, body.timestamp_unix_secs) in
     let b2_state = rec.getOr(state, "bay2_store", b2.empty_bay2_store()) in
     let b2_state = b2.store_claim(b2_state, pub.envelope) in
     let b2_state = b2.record_op(b2_state, "anka.published", { claim_space: body.claim_space, issuer: state.node_id }, state.node_id, body.timestamp_unix_secs) in
     let pub = { ...pub, node: { ...pub.node, bay2_store: b2_state } } in
-    json_response(pub.node, peers, local_address, registry, subscriptions, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
+    json_response(pub.node, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
   else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 7, str.len(req.path)) in
     if node.has_claim(state, digest) then
-      json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, envelope: node.fetch_claim(state, digest) })
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, envelope: node.fetch_claim(state, digest) })
     else
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 404, "claim not found")
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "claim not found")
   else if req.path == "/gossip" && req.method == "POST" then
     let rate_check = rl.check_and_increment(limits.gossip, rate_counts, req.body, now) in
     if !rate_check.allowed then
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 429, "rate limit exceeded: gossip")
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 429, "rate limit exceeded: gossip")
     else
     let body = json.decode(req.body) in
-    let scoped = in_scope(subscriptions, body.claim_space) in
+    let space_scoped = in_scope(subscriptions, body.claim_space) in
+    let shard_space_scoped = list.len(shard_subs.spaces) == 0 || list.any(shard_subs.spaces, fn(s) { s == "*" || s == body.claim_space }) in
+    let scoped = if list.len(shard_subs.spaces) == 0 then space_scoped else shard_space_scoped in
     let needs_fetch = scoped && !node.has_claim(state, body.digest_hex) && has_sender(body) in
     let next = if scoped then node.receive_gossip(state, body) else state in
     let _ = if needs_fetch then
-      promise.spawn(fn() { http.post(str.concat([local_address, "/fetch"]), json.encode({ digest_hex: body.digest_hex, sender_address: body.sender_address, timestamp_unix_secs: body.timestamp_unix_secs })) })
+      promise.spawn(fn() {
+        process.capture("curl", ["-s", "-m", "5", "-X", "POST",
+          "-H", "Content-Type: application/json",
+          "-d", json.encode({ digest_hex: body.digest_hex, sender_address: body.sender_address, timestamp_unix_secs: body.timestamp_unix_secs }),
+          str.concat([local_address, "/fetch"])])
+      })
     else null in
-    json_response(next, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, node_id: next.node_id, known_digest_count: list.len(next.known_digests), fetch_queued: needs_fetch, in_scope: scoped })
+    json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: next.node_id, known_digest_count: list.len(next.known_digests), fetch_queued: needs_fetch, in_scope: scoped })
+  else if req.path == "/subscribe/shard" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let next_shard_subs = if rec.has(body, "shard_key") then
+      shg.shard_sub_add_shard(shg.shard_sub_add_space(shard_subs, body.claim_space), body.shard_key)
+    else
+      shg.shard_sub_add_space(shard_subs, body.claim_space) in
+    json_response(state, peers, local_address, registry, subscriptions, next_shard_subs, arc, ledger, { ok: true, shard_subs: next_shard_subs })
+  else if req.path == "/shard/status" && req.method == "GET" then
+    let unique_digests = list.dedupe(state.known_digests) in
+    let unique_total = list.len(unique_digests) in
+    let subscribed = if list.len(shard_subs.spaces) == 0 then unique_total
+      else list.len(list.filter(unique_digests, fn(d) {
+        let env = rec.getOr(state.claims, d, null) in
+        if env == null then false
+        else list.any(shard_subs.spaces, fn(s) { s == "*" || s == env.claim.claim_space })
+      })) in
+    let saved = unique_total - subscribed in
+    let reduction_pct = if unique_total == 0 then 0 else saved * 100 / unique_total in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, shard_subs: shard_subs, reduction: { reduction_pct: reduction_pct, subscribed: subscribed, total: unique_total } })
   else if req.path == "/fetch" && req.method == "POST" then
     let body = json.decode(req.body) in
     let result = pipeline.fetch_verify_witness(state, body.sender_address, body.digest_hex, state.node_secret, body.timestamp_unix_secs) in
@@ -158,50 +190,50 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
       let b2_cur = if result.witness != null then b2.store_witness(b2_cur, result.witness) else b2_cur in
       let b2_cur = b2.record_op(b2_cur, "anka.witnessed", { digest_hex: body.digest_hex, witness: state.node_id }, state.node_id, body.timestamp_unix_secs) in
       let result = { ...result, node: { ...result.node, bay2_store: b2_cur } } in
-      json_response(result.node, peers, local_address, registry, subscriptions, arc2, ledger, { ok: true, digest_hex: body.digest_hex, witnessed: true })
+      json_response(result.node, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: body.digest_hex, witnessed: true })
     else
-      json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: false, digest_hex: body.digest_hex, reason: result.reason })
   else if req.path == "/witness" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next = node.receive_witness(state, body) in
     let arc2 = arch.record_claim_trail(arc, body.digest_hex, "witnessed", { witness: body.witness_node_id, validation_type: body.validation_type }, body.timestamp_unix_secs) in
     let ledger = econ.reward_witness(ledger, body.witness_node_id, "anka.witness", body.digest_hex).ledger in
-    json_response(next, peers, local_address, registry, subscriptions, arc2, ledger, { ok: true, node_id: next.node_id })
+    json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
     let rate_check = rl.check_and_increment(limits.challenge, rate_counts, state.node_id, now) in
     if !rate_check.allowed then
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 429, "rate limit exceeded: challenge")
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 429, "rate limit exceeded: challenge")
     else
     let body = json.decode(req.body) in
     let next = node.receive_challenge(state, body) in
     let arc2 = arch.record_claim_trail(arc, body.target_digest_hex, "challenged", { challenger: body.challenger_node_id, kind: body.kind }, body.timestamp_unix_secs) in
-    json_response(next, peers, local_address, registry, subscriptions, arc2, ledger, { ok: true, node_id: next.node_id })
+    json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, node_id: next.node_id })
   else if req.path == "/peer" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next_peers = if list.any(peers, fn(p) { p == body.address }) then peers else list.append(peers, body.address) in
-    json_response(state, next_peers, local_address, registry, subscriptions, arc, ledger, { ok: true, peer_count: list.len(next_peers), address: body.address })
+    json_response(state, next_peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, peer_count: list.len(next_peers), address: body.address })
   else if req.path == "/ledger" && req.method == "GET" then
     let balance = econ.get_balance(ledger, state.node_id) in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, node_id: state.node_id, balance: balance, ledger_summary: econ.ledger_summary(ledger) })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: state.node_id, balance: balance, ledger_summary: econ.ledger_summary(ledger) })
   else if req.path == "/ledger/credit" && req.method == "POST" then
     let body = json.decode(req.body) in
     let next_ledger = econ.credit(ledger, state.node_id, body.amount) in
-    json_response(state, peers, local_address, registry, subscriptions, arc, next_ledger, { ok: true, node_id: state.node_id, balance: econ.get_balance(next_ledger, state.node_id) })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, next_ledger, { ok: true, node_id: state.node_id, balance: econ.get_balance(next_ledger, state.node_id) })
   else if req.path == "/capability" && req.method == "POST" then
     let body = json.decode(req.body) in
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
     let result = caps.store_capability(cap_store, body.envelope) in
     let next_state = rec.set(state, "capability_store", result.store) in
-    json_response(next_state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, stored: result.stored, count: caps.capability_count(result.store) })
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, stored: result.stored, count: caps.capability_count(result.store) })
   else if req.path == "/capabilities" && req.method == "GET" then
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, count: caps.capability_count(cap_store), open: caps.capability_count(cap_store) == 0 })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, count: caps.capability_count(cap_store), open: caps.capability_count(cap_store) == 0 })
   else if req.path == "/peers" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, { ok: true, peers: peers })
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, peers: peers })
   else if str.starts_with(req.path, "/graph/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 13, str.len(req.path)) in
     if !node.has_claim(state, digest) then
-      error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 404, "claim not found")
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "claim not found")
     else
       let envelope = node.fetch_claim(state, digest) in
       let all_witnesses = rec.keys(state.witnesses) in
@@ -221,7 +253,7 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
         c.claim.claim_space == envelope.claim.claim_space &&
         k != digest
       }) in
-      json_response(state, peers, local_address, registry, subscriptions, arc, ledger, {
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
         ok: true,
         digest_hex: digest,
         claim: envelope.claim,
@@ -253,7 +285,7 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
     let winner_envelope = if collapse_result.winner_digest_hex != null then
       rec.get(state.claims, collapse_result.winner_digest_hex)
     else null in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, {
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
       ok: true,
       claim_space: claim_space,
       subject: subject,
@@ -293,7 +325,7 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
     let winner_envelope = if collapse_result.winner_digest_hex != null then
       rec.get(state.claims, collapse_result.winner_digest_hex)
     else null in
-    json_response(state, peers, local_address, registry, subscriptions, arc, ledger, {
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
       ok: true,
       claim_space: claim_space,
       subject: subject,
@@ -318,7 +350,7 @@ fn handle(state, peers, local_address, registry, subscriptions, arc, ledger, req
       })
     })
   else
-    error_response(state, peers, local_address, registry, subscriptions, arc, ledger, 404, "unknown route")
+    error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "unknown route")
 }
 
 export { handle, json_response, error_response }

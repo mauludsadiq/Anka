@@ -4,6 +4,7 @@ import("std/str") as str
 import("std/rec") as rec
 import("std/list") as list
 import("std/sqlite") as sqlite
+import("std/mutex") as mutex
 import("node") as node
 import("node_config") as ncfg
 import("node_server") as server
@@ -40,7 +41,9 @@ let initial_subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[
 let archive_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'")
 let initial_archive = if list.len(archive_rows) > 0 then json.decode(archive_rows[0].value) else arch.archive_empty()
 
+let state_mutex = mutex.new(0)
 let _ = net.serve(port, fn(req) {
+  mutex.with_lock(state_mutex, fn(_) {
   let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'") in
   let state = json.decode(rows[0].value) in
   let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'") in
@@ -49,16 +52,20 @@ let _ = net.serve(port, fn(req) {
   let registry = if list.len(reg_rows) > 0 then json.decode(reg_rows[0].value) else empty_registry in
   let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'") in
   let subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else [] in
+  let shard_sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'shard_subs'") in
+  let shard_subs = if list.len(shard_sub_rows) > 0 then json.decode(shard_sub_rows[0].value) else { spaces: [], shards: [] } in
   let arc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'") in
   let arc = if list.len(arc_rows) > 0 then json.decode(arc_rows[0].value) else arch.archive_empty() in
   let led_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'ledger'") in
   let ledger = if list.len(led_rows) > 0 then json.decode(led_rows[0].value) else econ.empty_ledger() in
-  let result = server.handle(state, peers, local_address, registry, subscriptions, arc, ledger, req) in
+  let result = server.handle(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, req) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", json.encode(result.next_registry), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", json.encode(result.next_subscriptions), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('shard_subs', '", json.encode(result.next_shard_subs), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", json.encode(result.next_archive), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('ledger', '", json.encode(result.next_ledger), "')"])) in
   result.response
+  })
 })
