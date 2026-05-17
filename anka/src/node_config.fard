@@ -29,7 +29,9 @@ fn default_config() {
 fn load_config(db) {
   let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_config'") in
   if list.len(rows) > 0 then json.decode(rows[0].value)
-  else default_config()
+  else
+    let _ = save_config(db, default_config()) in
+    default_config()
 }
 
 fn save_config(db, config) {
