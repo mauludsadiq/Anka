@@ -129,4 +129,17 @@ fn new_node_generated() {
   }
 }
 
+fn new_node_with_identity(node_id, private_key_hex, public_key_hex) {
+  {
+    node_id: node_id,
+    node_secret: private_key_hex,
+    public_key_hex: public_key_hex,
+    claims: {},
+    witnesses: {},
+    challenges: {},
+    known_digests: [],
+    bay2_store: null
+  }
+}
+
 export { new_node, new_node_generated, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }

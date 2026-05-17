@@ -5,6 +5,7 @@ import("std/rec") as rec
 import("std/list") as list
 import("std/sqlite") as sqlite
 import("node") as node
+import("node_config") as ncfg
 import("node_server") as server
 import("registry") as reg
 import("archive") as arch

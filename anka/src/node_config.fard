@@ -1,0 +1,61 @@
+import("std/json") as json
+import("std/str") as str
+import("std/rec") as rec
+import("std/sqlite") as sqlite
+import("keypair") as kp
+
+// Node operator configuration.
+// Identity is persistent — generated once, stored, reused on restart.
+// Config is read from the node database on boot.
+// If no identity exists, a new one is generated from a random seed.
+//
+// Config fields:
+//   node_name:        human-readable name for this node
+//   institution:      institutional affiliation
+//   local_address:    this node's externally reachable address
+//   origin_address:   the origin node for registry bootstrap
+//   peers:            initial peer list
+
+fn default_config() {
+  {
+    node_name: "anka-node",
+    institution: "independent",
+    local_address: "http://localhost:18080",
+    origin_address: "http://localhost:18090",
+    peers: []
+  }
+}
+
+fn load_config(db) {
+  let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_config'") in
+  if list.len(rows) > 0 then json.decode(rows[0].value)
+  else default_config()
+}
+
+fn save_config(db, config) {
+  sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_config', '", json.encode(config), "')"])) 
+}
+
+fn load_or_generate_identity(db, config) {
+  let rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_identity'") in
+  if list.len(rows) > 0 then json.decode(rows[0].value)
+  else
+    let seed = str.concat(["anka-operator-", config.node_name, "-", config.institution, "-", config.local_address]) in
+    let pair = kp.generate_keypair(seed) in
+    let identity = {
+      node_id: pair.node_id,
+      private_key_hex: pair.private_key_hex,
+      public_key_hex: pair.public_key_hex,
+      node_name: config.node_name,
+      institution: config.institution,
+      created_at: 0
+    } in
+    let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_identity', '", json.encode(identity), "')"])) in
+    identity
+}
+
+fn identity_to_node_seed(identity) {
+  str.concat(["anka-operator-", identity.node_id])
+}
+
+export { default_config, load_config, save_config, load_or_generate_identity, identity_to_node_seed }
