@@ -13,12 +13,12 @@ hdr() { echo -e "\n${BOLD}${BLUE}── $1${RESET}"; }
 
 cleanup() {
   echo -e "\n  Shutting down five-node mesh..."
-  lsof -ti:18080,18081,18082,18083,18084,18090 | xargs kill -9 2>/dev/null || true
+  lsof -ti:18080,18081,18082,18083,18084,18085,18090 | xargs kill -9 2>/dev/null || true
   echo "  Stopped."
 }
 trap cleanup EXIT INT TERM
 
-lsof -ti:18080,18081,18082,18083,18084,18090 | xargs kill -9 2>/dev/null || true
+lsof -ti:18080,18081,18082,18083,18084,18085,18090 | xargs kill -9 2>/dev/null || true
 sleep 1
 mkdir -p out/node out/origin
 
@@ -28,6 +28,13 @@ fardrun run --program anka/src/origin_process.fard --out out/origin > /tmp/origi
 sleep 2
 curl -s http://localhost:18090/health | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d['ok'] else 1)" \
   && ok "Origin running on :18090" || { echo "Origin failed"; exit 1; }
+
+hdr "Starting View Node (:18085)"
+mkdir -p out/view
+rm -f out/view/anka_view.db
+fardrun run --program anka/src/view_process.fard --out out/view > /tmp/view.log 2>&1 &
+sleep 2
+curl -s http://localhost:18085/health | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d['ok'] else 1)"   && ok "View node running on :18085" || echo "  View node failed"
 
 hdr "Starting Five Nodes (:18080-18084)"
 NODES=("Oxford:18080:anka_node:node_process" "MIT:18081:anka_node_b:node_process_b" "Stanford:18082:anka_node_c:node_process_c" "DeepMind:18083:anka_node_d:node_process_d" "Harvard:18084:anka_node_e:node_process_e")
@@ -72,6 +79,14 @@ for port in "${PORTS[@]}"; do
 done
 ok "Registry bootstrapped on all nodes"
 
+hdr "Registering All Nodes with View Node"
+for vport in 18080 18081 18082 18083 18084; do
+  python3 -c "import json; open('/tmp/vpeer.json','w').write(json.dumps({'address':f'http://localhost:$vport'}))"
+  curl -s -X POST http://localhost:18085/peer -H "Content-Type: application/json" -d @/tmp/vpeer.json > /dev/null
+done
+curl -s -X POST http://localhost:18085/sync | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  View node synced: pulled={d["pulled"]} ingested={d["ingested_count"]}')" 2>/dev/null
+ok "View node registered all five nodes as peers"
+
 hdr "Mesh Status"
 TOTAL_CLAIMS=0
 for entry in "${NODES[@]}"; do
@@ -93,6 +108,7 @@ echo "  Stanford: http://localhost:18082"
 echo "  DeepMind: http://localhost:18083"
 echo "  Harvard:  http://localhost:18084"
 echo "  Origin:   http://localhost:18090"
+echo "  View:     http://localhost:18085"
 echo ""
 echo "Press Ctrl+C to stop."
 echo ""

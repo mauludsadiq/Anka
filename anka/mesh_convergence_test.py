@@ -52,3 +52,14 @@ for port in [18080, 18081, 18082, 18083, 18084]:
 
 print()
 print("PHASE 2.1 COMPLETE: five-node mesh converged" if all_ok else "PHASE 2.1 INCOMPLETE")
+
+print("\n=== View Node Query (Phase 2.4) ===")
+# Sync view node first
+sync = post("http://localhost:18085/sync", {})
+print(f"  View sync: pulled={sync.get('pulled',0)} ingested={sync.get('ingested_count',0)}")
+view_q = get("http://localhost:18085/query/research.result.claims/phase2-convergence-test")
+if view_q.get("ok"):
+    print(f"  View query: ok=True count={view_q.get('claim_count',0)}")
+    print("PHASE 2.4: view node serves query across five-node mesh")
+else:
+    print(f"  View query: {view_q}")
