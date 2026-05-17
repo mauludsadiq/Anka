@@ -1,0 +1,55 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+
+// Trial Agent
+// Role: publish clinical trial results to clinical.trial.results.
+// Each result cites the trial protocol dataset by digest.
+// Publishes to: clinical.trial.results, dataset.provenance
+
+fn make_dalil(node_address) {
+  {
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn register_trial_protocol(node_address, trial_id, description, sponsor, phase, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat([description, " | sponsor:", sponsor, " | phase:", phase]) in
+  dalil.compose(node_address, "dataset.provenance", trial_id, finding, [], timestamp)
+}
+
+fn publish_trial_result(node_address, trial_id, outcome, adverse_events, protocol_digest, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat([outcome, " | adverse_events:", adverse_events]) in
+  dalil.compose(node_address, "clinical.trial.results", trial_id, finding, [protocol_digest], timestamp)
+}
+
+fn run(node_address, institution, trials, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let results = list.map(trials, fn(t) {
+    let protocol = register_trial_protocol(node_address, t.trial_id, t.description, t.sponsor, t.phase, timestamp) in
+    let result = publish_trial_result(node_address, t.trial_id, t.outcome, t.adverse_events, protocol.digest_hex, timestamp + 1) in
+    { trial_id: t.trial_id, protocol_digest: protocol.digest_hex, result_digest: result.digest_hex, ok: result.ok }
+  }) in
+  {
+    ok: true,
+    agent: "trial",
+    institution: institution,
+    node_address: node_address,
+    published_count: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, register_trial_protocol, publish_trial_result, run }

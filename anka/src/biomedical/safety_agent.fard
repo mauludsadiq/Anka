@@ -1,0 +1,129 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Safety Monitoring Agent
+// Role: monitor trial results for adverse events, challenge unverified adverse findings,
+//       publish to drug.safety.claims when adverse pattern confirmed.
+//
+// Deliberation logic:
+//   - If finding contains adverse event markers AND no corroborating witnesses: challenge
+//   - If finding has adverse markers AND sufficient witnesses: publish safety claim
+//   - If finding is clean (no adverse markers): witness
+//   - Already seen: ignore
+
+fn make_dalil(node_address) {
+  {
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let claims = list.fold(kd.known_digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              score: 0,
+              issuer: env.claim.issuer_node_id,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    post_node: fn(addr, path, body) {
+      let result = http.post(str.concat([addr, path]), json.encode(body)) in
+      if result.status == 200 then { ok: true, data: json.decode(result.body) }
+      else { ok: false }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex }
+      else { ok: false }
+    }
+  }
+}
+
+fn has_adverse_markers(finding) {
+  str.contains(finding, "adverse") ||
+  str.contains(finding, "serious") ||
+  str.contains(finding, "fatal") ||
+  str.contains(finding, "severe")
+}
+
+fn deliberate(claim, seen_digests, min_witnesses_for_safety) {
+  let digest = claim.digest_hex in
+  if rec.has(seen_digests, digest) then
+    { action: "ignore", reason: "already seen", digest: digest }
+  else if claim.claim_space != "clinical.trial.results" then
+    { action: "ignore", reason: "not a trial result", digest: digest }
+  else if has_adverse_markers(claim.finding) then
+    if claim.score >= min_witnesses_for_safety then
+      { action: "publish_safety", reason: "adverse event confirmed by witnesses", digest: digest }
+    else
+      { action: "challenge", reason: "adverse event claim lacks corroboration", digest: digest }
+  else
+    { action: "witness", reason: "clean trial result", digest: digest }
+}
+
+fn run(node_address, institution, since_ts, timestamp, min_witnesses) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["clinical.trial.results"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let result = list.fold(feed.claims, { witnessed: 0, challenged: 0, safety_published: 0, seen: {} }, fn(acc, claim) {
+      let delib = deliberate(claim, acc.seen, min_witnesses) in
+      let next_seen = rec.set(acc.seen, claim.digest_hex, true) in
+      if delib.action == "witness" then
+        let _ = dalil.post_node(node_address, "/witness", {
+          digest_hex: claim.digest_hex,
+          witness_node_id: str.concat([institution, "-safety-agent"]),
+          validation_type: "safety_review",
+          timestamp_unix_secs: timestamp
+        }) in
+        { ...acc, witnessed: acc.witnessed + 1, seen: next_seen }
+      else if delib.action == "challenge" then
+        let _ = dalil.post_node(node_address, "/challenge", {
+          target_digest_hex: claim.digest_hex,
+          challenger_node_id: str.concat([institution, "-safety-agent"]),
+          kind: "safety_concern",
+          reasoning: delib.reason,
+          challenger_signature_hex: "sig",
+          timestamp_unix_secs: timestamp
+        }) in
+        { ...acc, challenged: acc.challenged + 1, seen: next_seen }
+      else if delib.action == "publish_safety" then
+        let safety_finding = str.concat(["SAFETY SIGNAL CONFIRMED: ", claim.finding]) in
+        let _ = dalil.compose(node_address, "drug.safety.claims", claim.subject, safety_finding, [claim.digest_hex], timestamp) in
+        { ...acc, safety_published: acc.safety_published + 1, seen: next_seen }
+      else
+        { ...acc, seen: next_seen }
+    }) in
+    {
+      ok: true,
+      agent: "safety-monitoring",
+      institution: institution,
+      observed: list.len(feed.claims),
+      witnessed: result.witnessed,
+      challenged: result.challenged,
+      safety_published: result.safety_published
+    }
+}
+
+export { make_dalil, has_adverse_markers, deliberate, run }

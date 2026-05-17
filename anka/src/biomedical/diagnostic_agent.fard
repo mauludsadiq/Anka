@@ -1,0 +1,69 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Diagnostic Agent
+// Role: build diagnostic models on top of verified trial data.
+// Only publishes to diagnostic.model.claims when source trial result
+// has sufficient witness score (verified by safety monitoring).
+// Publishes to: diagnostic.model.claims
+
+fn make_dalil(node_address) {
+  {
+    read: fn(addr, cs, subj) {
+      let r = http.get(str.concat([addr, "/query/", cs, "/", subj])) in
+      if r.status != 200 then { ok: false }
+      else
+        let d = json.decode(r.body) in
+        { ok: true, finding: d.single_winner.winner_value, score: d.single_winner.winner_score, digest_hex: d.single_winner.winner_digest_hex }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn derive_diagnostic_model(trial_id, trial_finding, score) {
+  if str.contains(trial_finding, "efficacy") then
+    str.concat(["DIAGNOSTIC MODEL for ", trial_id, ": high confidence based on efficacy evidence (score:", str.from(score), ")"])
+  else
+    str.concat(["DIAGNOSTIC MODEL for ", trial_id, ": moderate confidence pending further trials (score:", str.from(score), ")"])
+}
+
+fn run(node_address, institution, trial_subjects, min_witness_score, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let results = list.map(trial_subjects, fn(subject) {
+    let reading = dalil.read(node_address, "clinical.trial.results", subject) in
+    if !reading.ok then
+      { subject: subject, ok: false, reason: "no trial result" }
+    else
+      let score = reading.score ?? 0 in
+      if score < min_witness_score then
+        { subject: subject, ok: false, reason: str.concat(["score ", str.from(score), " below threshold"]) }
+      else
+        let model = derive_diagnostic_model(subject, reading.finding ?? "", score) in
+        let result = dalil.compose(node_address, "diagnostic.model.claims", subject, model,
+          [reading.digest_hex], timestamp) in
+        { subject: subject, ok: result.ok, diagnostic_digest: result.digest_hex, based_on_score: score }
+  }) in
+  {
+    ok: true,
+    agent: "diagnostic",
+    institution: institution,
+    node_address: node_address,
+    evaluated: list.len(trial_subjects),
+    published: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, derive_diagnostic_model, run }

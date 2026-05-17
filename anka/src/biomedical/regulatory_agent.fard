@@ -1,0 +1,75 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Regulatory Agent
+// Role: maintain compliance positions based on trial results and safety signals.
+// Reads from: clinical.trial.results, drug.safety.claims, diagnostic.model.claims
+// Publishes to: drug.safety.claims (compliance positions)
+//
+// Deliberation:
+//   - If safety signal exists for a drug: publish HOLD or WITHDRAW position
+//   - If trial result is clean and witnessed: publish APPROVED position
+//   - If diagnostic model exists: publish CLEARED FOR DIAGNOSTIC USE
+
+fn make_dalil(node_address) {
+  {
+    read: fn(addr, cs, subj) {
+      let r = http.get(str.concat([addr, "/query/", cs, "/", subj])) in
+      if r.status != 200 then { ok: false, finding: null, score: 0, digest_hex: null }
+      else
+        let d = json.decode(r.body) in
+        let w = d.single_winner in
+        { ok: true, finding: w.winner_value, score: w.winner_score ?? 0, digest_hex: w.winner_digest_hex }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex }
+      else { ok: false }
+    }
+  }
+}
+
+fn derive_compliance_position(subject, trial_finding, safety_finding, min_score) {
+  let has_safety_signal = safety_finding != null && str.contains(safety_finding, "SAFETY SIGNAL") in
+  let has_clean_trial = trial_finding != null && !str.contains(trial_finding, "adverse") in
+  if has_safety_signal then
+    str.concat(["REGULATORY HOLD on ", subject, ": safety signal detected — ", safety_finding])
+  else if has_clean_trial then
+    str.concat(["APPROVED: ", subject, " meets safety and efficacy standards"])
+  else
+    str.concat(["UNDER REVIEW: ", subject, " — insufficient evidence for approval"])
+}
+
+fn run(node_address, institution, subjects, min_witness_score, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let results = list.map(subjects, fn(subject) {
+    let trial = dalil.read(node_address, "clinical.trial.results", subject) in
+    let safety = dalil.read(node_address, "drug.safety.claims", subject) in
+    let trial_finding = if trial.ok then trial.finding else null in
+    let safety_finding = if safety.ok then safety.finding else null in
+    let position = derive_compliance_position(subject, trial_finding, safety_finding, min_witness_score) in
+    let refs = list.filter([trial.digest_hex, safety.digest_hex], fn(d) { d != null }) in
+    let result = dalil.compose(node_address, "drug.safety.claims", str.concat([subject, ":regulatory"]),
+      position, refs, timestamp) in
+    { subject: subject, position: position, ok: result.ok, digest: result.digest_hex }
+  }) in
+  {
+    ok: true,
+    agent: "regulatory",
+    institution: institution,
+    node_address: node_address,
+    evaluated: list.len(subjects),
+    published: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, derive_compliance_position, run }

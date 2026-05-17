@@ -1,0 +1,137 @@
+import("../src/biomedical/safety_agent") as safety
+import("../src/biomedical/diagnostic_agent") as diagnostic
+import("../src/biomedical/regulatory_agent") as regulatory
+import("std/list") as list
+import("std/str") as str
+
+test "safety agent detects adverse markers: adverse" {
+  safety.has_adverse_markers("adverse reaction reported in 3 patients")
+}
+
+test "safety agent detects adverse markers: serious" {
+  safety.has_adverse_markers("serious hepatotoxicity observed")
+}
+
+test "safety agent detects adverse markers: fatal" {
+  safety.has_adverse_markers("fatal outcome in 1 patient")
+}
+
+test "safety agent: clean finding has no adverse markers" {
+  !safety.has_adverse_markers("primary endpoint met, well tolerated")
+}
+
+test "safety deliberation: witness clean result" {
+  let claim = {
+    digest_hex: "sha256:t001",
+    claim_space: "clinical.trial.results",
+    subject: "DRUG-XA-001",
+    finding: "primary endpoint met, 87% efficacy",
+    evidence_refs: ["sha256:protocol001"],
+    score: 0,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let delib = safety.deliberate(claim, {}, 2) in
+  delib.action == "witness"
+}
+
+test "safety deliberation: challenge unwitnessed adverse finding" {
+  let claim = {
+    digest_hex: "sha256:t002",
+    claim_space: "clinical.trial.results",
+    subject: "DRUG-XA-002",
+    finding: "serious adverse events in 12% of patients",
+    evidence_refs: ["sha256:protocol002"],
+    score: 0,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let delib = safety.deliberate(claim, {}, 2) in
+  delib.action == "challenge"
+}
+
+test "safety deliberation: publish safety claim when adverse confirmed" {
+  let claim = {
+    digest_hex: "sha256:t003",
+    claim_space: "clinical.trial.results",
+    subject: "DRUG-XA-003",
+    finding: "fatal adverse event in high-dose arm",
+    evidence_refs: ["sha256:protocol003"],
+    score: 3,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let delib = safety.deliberate(claim, {}, 2) in
+  delib.action == "publish_safety"
+}
+
+test "safety deliberation: ignore already seen" {
+  let claim = {
+    digest_hex: "sha256:t004",
+    claim_space: "clinical.trial.results",
+    subject: "DRUG-XA-004",
+    finding: "primary endpoint met",
+    evidence_refs: [],
+    score: 0,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let seen = { "sha256:t004": true } in
+  let delib = safety.deliberate(claim, seen, 2) in
+  delib.action == "ignore"
+}
+
+test "safety deliberation: ignore non-trial claims" {
+  let claim = {
+    digest_hex: "sha256:t005",
+    claim_space: "dataset.provenance",
+    subject: "TRIAL-PROTOCOL-001",
+    finding: "phase 3 protocol",
+    evidence_refs: [],
+    score: 0,
+    issuer: "oxford-trial",
+    timestamp: 1775710900
+  } in
+  let delib = safety.deliberate(claim, {}, 2) in
+  delib.action == "ignore"
+}
+
+test "diagnostic model: high confidence for efficacy finding" {
+  let model = diagnostic.derive_diagnostic_model("DRUG-XA-001", "87% efficacy demonstrated", 3) in
+  str.contains(model, "high confidence")
+}
+
+test "diagnostic model: moderate confidence for inconclusive finding" {
+  let model = diagnostic.derive_diagnostic_model("DRUG-XA-002", "mixed results observed", 2) in
+  str.contains(model, "moderate confidence")
+}
+
+test "regulatory: hold for safety signal" {
+  let position = regulatory.derive_compliance_position(
+    "DRUG-XA-003",
+    "adverse events in 12%",
+    "SAFETY SIGNAL CONFIRMED: fatal adverse event",
+    2
+  ) in
+  str.starts_with(position, "REGULATORY HOLD")
+}
+
+test "regulatory: approved for clean trial" {
+  let position = regulatory.derive_compliance_position(
+    "DRUG-XA-001",
+    "primary endpoint met, well tolerated",
+    null,
+    2
+  ) in
+  str.starts_with(position, "APPROVED")
+}
+
+test "regulatory: under review when no evidence" {
+  let position = regulatory.derive_compliance_position(
+    "DRUG-XA-NEW",
+    null,
+    null,
+    2
+  ) in
+  str.starts_with(position, "UNDER REVIEW")
+}
