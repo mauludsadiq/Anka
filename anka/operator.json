@@ -1,0 +1,7 @@
+{
+  "node_name": "my-institution-node",
+  "institution": "My Institution",
+  "local_address": "http://my-host:18080",
+  "origin_address": "http://localhost:18090",
+  "peers": []
+}

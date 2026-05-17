@@ -13,14 +13,14 @@ import("scoped_gossip") as sg
 import("archive") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
-import("bay2_http_store") as b2
+import("bay2_store") as b2
 import("capability_store") as caps
 import("rate_limit") as rl
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
 import("claim_set") as cset
-import("bay2_http_store") as b2
+import("bay2_store") as b2
 import("capability_store") as caps
 import("rate_limit") as rl
 import("dashboard") as dashboard

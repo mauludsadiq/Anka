@@ -28,13 +28,13 @@ fn empty_bay2_store() {
 }
 
 fn store_claim(bay2_store, envelope) {
-  let result = bay2_post("/object", {
+  let result = http.post(str.concat([BAY2_URL, "/object"]), json.encode({
     kind: "anka.claim",
     payload: envelope,
     author_id: envelope.claim.issuer_node_id,
     timestamp_unix_secs: envelope.claim.timestamp_unix_secs,
     tags: [envelope.claim.claim_space]
-  }) in
+  })) in
   bay2_store
 }
 
@@ -61,13 +61,13 @@ fn all_claims_map(bay2_store) {
 }
 
 fn store_witness(bay2_store, witness) {
-  let _ = bay2_post("/object", {
+  let result = http.post(str.concat([BAY2_URL, "/object"]), json.encode({
     kind: "anka.witness",
     payload: witness,
     author_id: witness.witness_node_id,
     timestamp_unix_secs: witness.timestamp_unix_secs,
     tags: ["anka.witness"]
-  }) in
+  })) in
   bay2_store
 }
 
@@ -107,13 +107,13 @@ fn all_challenges_map(bay2_store) {
 }
 
 fn record_op(bay2_store, kind, payload, author_id, timestamp_unix_secs) {
-  let _ = bay2_post("/object", {
+  let result = http.post(str.concat([BAY2_URL, "/object"]), json.encode({
     kind: "anka.op",
     payload: { op_kind: kind, op_payload: payload, author_id: author_id },
     author_id: author_id,
     timestamp_unix_secs: timestamp_unix_secs,
     tags: ["anka.op", kind]
-  }) in
+  })) in
   bay2_store
 }
 

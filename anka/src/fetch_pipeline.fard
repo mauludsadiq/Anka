@@ -37,23 +37,11 @@ fn verify_and_witness(local_node, envelope, timestamp_unix_secs) {
 
 fn fetch_verify_witness(local_node, peer_address, digest_hex, issuer_secret, timestamp_unix_secs) {
   let fetch_result = fetch_envelope(peer_address, digest_hex) in
-  if fetch_result.ok then
-    let result = verify_and_witness(local_node, fetch_result.envelope, timestamp_unix_secs) in
-    {
-      ok: result.ok,
-      node: result.node,
-      witness: result.witness,
-      digest_hex: digest_hex,
-      reason: result.reason
-    }
+  if !fetch_result.ok then
+    { ok: false, node: local_node, witness: null, digest_hex: digest_hex, reason: fetch_result.reason }
   else
-    {
-      ok: false,
-      node: local_node,
-      witness: null,
-      digest_hex: digest_hex,
-      reason: fetch_result.reason
-    }
+    let result = verify_and_witness(local_node, fetch_result.envelope, timestamp_unix_secs) in
+    { ok: result.ok, node: result.node, witness: result.witness, digest_hex: digest_hex, reason: result.reason }
 }
 
 export { fetch_envelope, verify_and_witness, fetch_verify_witness }
