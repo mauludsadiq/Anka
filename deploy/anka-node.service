@@ -1,0 +1,24 @@
+[Unit]
+Description=ANKA Epistemic Node
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anka
+WorkingDirectory=/opt/anka
+ExecStart=/usr/local/bin/fardrun run --program anka/src/node_process.fard --out out/node
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=anka-node
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/anka/out
+
+[Install]
+WantedBy=multi-user.target
