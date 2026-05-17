@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./anka-node.Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - anka_node
+
+  anka_node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    expose:
+      - "18080"
+    volumes:
+      - node_data:/app/out/node
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  node_data:

@@ -1,0 +1,8 @@
+# anka-node.Caddyfile
+# TLS reverse proxy for an ANKA node.
+# Caddy auto-provisions TLS via Let's Encrypt.
+# Replace your-node-domain.example.com with your actual domain.
+
+your-node-domain.example.com {
+    reverse_proxy localhost:18080
+}
