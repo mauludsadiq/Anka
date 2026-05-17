@@ -1,0 +1,79 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Financial Regulatory Agent
+// Role: maintain compliance positions based on risk assessments and audit results.
+// Reads: risk.assessment.claims, audit.receipts, market.forecast.claims
+// Publishes: risk.assessment.claims (regulatory verdicts)
+//
+// Deliberation:
+//   - AUDIT_FAIL + HIGH_RISK: publish REGULATORY_ACTION
+//   - HIGH_RISK only: publish REGULATORY_WARNING
+//   - AUDIT_PASS + LOW_RISK: publish REGULATORY_CLEARED
+//   - Otherwise: REGULATORY_MONITORING
+
+fn make_dalil(node_address) {
+  {
+    read: fn(addr, cs, subj) {
+      let r = http.get(str.concat([addr, "/query/", cs, "/", subj])) in
+      if r.status != 200 then { ok: false, finding: null, score: 0, digest_hex: null }
+      else
+        let d = json.decode(r.body) in
+        let w = d.single_winner in
+        { ok: true, finding: w.winner_value, score: w.winner_score ?? 0, digest_hex: w.winner_digest_hex }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex }
+      else { ok: false }
+    }
+  }
+}
+
+fn derive_regulatory_position(subject, risk_finding, audit_finding) {
+  let has_high_risk = risk_finding != null && str.contains(risk_finding, "HIGH_RISK") in
+  let has_audit_fail = audit_finding != null && str.contains(audit_finding, "AUDIT_FAIL") in
+  let has_low_risk = risk_finding != null && str.contains(risk_finding, "LOW_RISK") in
+  let has_audit_pass = audit_finding != null && str.contains(audit_finding, "AUDIT_PASS") in
+  if has_high_risk && has_audit_fail then
+    str.concat(["REGULATORY_ACTION on ", subject, ": high risk forecast with failed audit"])
+  else if has_high_risk then
+    str.concat(["REGULATORY_WARNING on ", subject, ": overconfident forecast detected"])
+  else if has_low_risk && has_audit_pass then
+    str.concat(["REGULATORY_CLEARED: ", subject, " meets risk and audit standards"])
+  else
+    str.concat(["REGULATORY_MONITORING: ", subject, " — under observation"])
+}
+
+fn run(node_address, institution, subjects, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let results = list.map(subjects, fn(subject) {
+    let risk = dalil.read(node_address, "risk.assessment.claims", subject) in
+    let audit = dalil.read(node_address, "audit.receipts", str.concat([subject, ":audit"])) in
+    let risk_finding = if risk.ok then risk.finding else null in
+    let audit_finding = if audit.ok then audit.finding else null in
+    let position = derive_regulatory_position(subject, risk_finding, audit_finding) in
+    let refs = list.filter([risk.digest_hex, audit.digest_hex], fn(d) { d != null }) in
+    let result = dalil.compose(node_address, "risk.assessment.claims",
+      str.concat([subject, ":regulatory"]), position, refs, timestamp) in
+    { subject: subject, position: position, ok: result.ok }
+  }) in
+  {
+    ok: true,
+    agent: "financial-regulatory",
+    institution: institution,
+    evaluated: list.len(subjects),
+    published: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, derive_regulatory_position, run }

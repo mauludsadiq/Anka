@@ -1,0 +1,103 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Audit Agent
+// Role: verify that forecasts and models cite valid computation receipts.
+// Reads: audit.receipts, market.forecast.claims, economic.model.claims
+// Publishes to: audit.receipts (audit verdicts)
+//
+// Deliberation:
+//   - For each forecast, verify its evidence_refs resolve to audit.receipts claims
+//   - If receipt found and valid: publish AUDIT_PASS verdict
+//   - If no receipt or invalid: publish AUDIT_FAIL verdict
+
+fn make_dalil(node_address) {
+  {
+    fetch: fn(addr, digest) {
+      let r = http.get(str.concat([addr, "/claim/", digest])) in
+      if r.status != 200 then { ok: false }
+      else
+        let d = json.decode(r.body) in
+        { ok: true, envelope: d.envelope }
+    },
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let claims = list.fold(kd.known_digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex }
+      else { ok: false }
+    }
+  }
+}
+
+fn verify_receipt(dalil, node_address, receipt_digest) {
+  if receipt_digest == null then { valid: false, reason: "no receipt digest" }
+  else
+    let result = dalil.fetch(node_address, receipt_digest) in
+    if !result.ok then { valid: false, reason: "receipt not found" }
+    else
+      let claim_space = result.envelope.claim.claim_space in
+      if claim_space == "audit.receipts" then
+        { valid: true, reason: "valid computation receipt", receipt: result.envelope }
+      else
+        { valid: false, reason: str.concat(["ref is not an audit receipt: ", claim_space]) }
+}
+
+fn run(node_address, institution, since_ts, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["market.forecast.claims", "economic.model.claims"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let results = list.map(feed.claims, fn(claim) {
+      let first_ref = if list.len(claim.evidence_refs) > 0 then list.head(claim.evidence_refs) else null in
+      let verification = verify_receipt(dalil, node_address, first_ref) in
+      let verdict = if verification.valid then
+        str.concat(["AUDIT_PASS: ", claim.subject, " — computation receipt verified"])
+      else
+        str.concat(["AUDIT_FAIL: ", claim.subject, " — ", verification.reason]) in
+      let published = dalil.compose(node_address, "audit.receipts",
+        str.concat([claim.subject, ":audit"]), verdict, [claim.digest_hex], timestamp) in
+      { subject: claim.subject, verdict: verdict, ok: published.ok, pass: verification.valid }
+    }) in
+    {
+      ok: true,
+      agent: "audit",
+      institution: institution,
+      audited: list.len(results),
+      passed: list.len(list.filter(results, fn(r) { r.pass })),
+      failed: list.len(list.filter(results, fn(r) { !r.pass })),
+      results: results
+    }
+}
+
+export { make_dalil, verify_receipt, run }

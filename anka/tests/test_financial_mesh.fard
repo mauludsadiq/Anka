@@ -1,0 +1,137 @@
+import("../src/financial/risk_agent") as risk
+import("../src/financial/financial_regulatory_agent") as reg
+import("std/str") as str
+import("std/list") as list
+
+test "risk agent parses confidence from finding" {
+  let finding = "GDP growth 2.3% | confidence:72 | model:MACRO-V2" in
+  risk.parse_confidence(finding) == 72
+}
+
+test "risk agent parses confidence: high value" {
+  let finding = "S&P 500 at 5200 | confidence:91 | model:EQUITY-V1" in
+  risk.parse_confidence(finding) == 91
+}
+
+test "risk agent defaults to 50 when no confidence tag" {
+  let finding = "GDP growth 2.3% — no confidence specified" in
+  risk.parse_confidence(finding) == 50
+}
+
+test "risk deliberation: challenge overconfident forecast" {
+  let claim = {
+    digest_hex: "sha256:f001",
+    claim_space: "market.forecast.claims",
+    subject: "SP500-2024",
+    finding: "S&P 500 at 5800 | confidence:92 | model:EQUITY-V1",
+    evidence_refs: ["sha256:receipt001"],
+    score: 0,
+    issuer: "oxford-finance",
+    timestamp: 1775710900
+  } in
+  let delib = risk.deliberate(claim, {}, 85) in
+  delib.action == "challenge"
+}
+
+test "risk deliberation: witness well-calibrated forecast" {
+  let claim = {
+    digest_hex: "sha256:f002",
+    claim_space: "market.forecast.claims",
+    subject: "GDP-2024",
+    finding: "GDP growth 2.1% | confidence:68 | model:MACRO-V2",
+    evidence_refs: ["sha256:receipt002"],
+    score: 0,
+    issuer: "mit-finance",
+    timestamp: 1775710900
+  } in
+  let delib = risk.deliberate(claim, {}, 85) in
+  delib.action == "witness"
+}
+
+test "risk deliberation: challenge forecast with no receipt" {
+  let claim = {
+    digest_hex: "sha256:f003",
+    claim_space: "market.forecast.claims",
+    subject: "OIL-2024",
+    finding: "Oil at $95 | confidence:70 | model:ENERGY-V1",
+    evidence_refs: [],
+    score: 0,
+    issuer: "stanford-finance",
+    timestamp: 1775710900
+  } in
+  let delib = risk.deliberate(claim, {}, 85) in
+  delib.action == "challenge"
+}
+
+test "risk deliberation: ignore already seen" {
+  let claim = {
+    digest_hex: "sha256:f004",
+    claim_space: "market.forecast.claims",
+    subject: "RATES-2024",
+    finding: "Fed rate 5.25% | confidence:80 | model:RATES-V1",
+    evidence_refs: ["sha256:receipt004"],
+    score: 0,
+    issuer: "deepmind-finance",
+    timestamp: 1775710900
+  } in
+  let seen = { "sha256:f004": true } in
+  let delib = risk.deliberate(claim, seen, 85) in
+  delib.action == "ignore"
+}
+
+test "risk deliberation: ignore non-forecast claims" {
+  let claim = {
+    digest_hex: "sha256:f005",
+    claim_space: "economic.model.claims",
+    subject: "MACRO-V2",
+    finding: "Macroeconomic model v2",
+    evidence_refs: ["sha256:receipt005"],
+    score: 0,
+    issuer: "oxford-finance",
+    timestamp: 1775710900
+  } in
+  let delib = risk.deliberate(claim, {}, 85) in
+  delib.action == "ignore"
+}
+
+test "has receipt ref: true when refs present" {
+  let claim = { evidence_refs: ["sha256:receipt001"] } in
+  risk.has_receipt_ref(claim)
+}
+
+test "has receipt ref: false when empty" {
+  let claim = { evidence_refs: [] } in
+  !risk.has_receipt_ref(claim)
+}
+
+test "regulatory: action for high risk and audit fail" {
+  let pos = reg.derive_regulatory_position(
+    "SP500-2024",
+    "HIGH_RISK on SP500-2024: overconfident",
+    "AUDIT_FAIL: SP500-2024 — receipt not found"
+  ) in
+  str.starts_with(pos, "REGULATORY_ACTION")
+}
+
+test "regulatory: warning for high risk only" {
+  let pos = reg.derive_regulatory_position(
+    "SP500-2024",
+    "HIGH_RISK on SP500-2024: overconfident",
+    null
+  ) in
+  str.starts_with(pos, "REGULATORY_WARNING")
+}
+
+test "regulatory: cleared for low risk and audit pass" {
+  let pos = reg.derive_regulatory_position(
+    "GDP-2024",
+    "LOW_RISK on GDP-2024: well-calibrated",
+    "AUDIT_PASS: GDP-2024 — receipt verified"
+  ) in
+  str.starts_with(pos, "REGULATORY_CLEARED")
+}
+
+test "regulatory: monitoring when no signals" {
+  let pos = reg.derive_regulatory_position("RATES-2024", null, null) in
+  str.starts_with(pos, "REGULATORY_MONITORING")
+}

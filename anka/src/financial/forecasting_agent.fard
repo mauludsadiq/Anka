@@ -1,0 +1,64 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+
+// Forecasting Agent
+// Role: publish economic models and market forecasts.
+// Each forecast must cite a computation receipt and confidence level.
+// Publishes to: economic.model.claims, market.forecast.claims, audit.receipts
+//
+// Finding format: "{value} | confidence:{pct} | model:{model_id}"
+// High confidence (>80%) forecasts are subject to risk agent scrutiny.
+
+fn make_dalil(node_address) {
+  {
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn publish_computation_receipt(node_address, model_id, computation_summary, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat(["COMPUTATION RECEIPT | model:", model_id, " | ", computation_summary]) in
+  dalil.compose(node_address, "audit.receipts", model_id, finding, [], timestamp)
+}
+
+fn publish_forecast(node_address, subject, value, confidence_pct, model_id, receipt_digest, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat([value, " | confidence:", str.from(confidence_pct), " | model:", model_id]) in
+  dalil.compose(node_address, "market.forecast.claims", subject, finding, [receipt_digest], timestamp)
+}
+
+fn publish_economic_model(node_address, model_id, description, methodology, receipt_digest, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat([description, " | methodology:", methodology]) in
+  dalil.compose(node_address, "economic.model.claims", model_id, finding, [receipt_digest], timestamp)
+}
+
+fn run(node_address, institution, forecasts, timestamp) {
+  let results = list.map(forecasts, fn(f) {
+    let receipt = publish_computation_receipt(node_address, f.model_id, f.computation_summary, timestamp) in
+    let model = publish_economic_model(node_address, f.model_id, f.description, f.methodology, receipt.digest_hex, timestamp + 1) in
+    let forecast = publish_forecast(node_address, f.subject, f.value, f.confidence_pct, f.model_id, receipt.digest_hex, timestamp + 2) in
+    { subject: f.subject, receipt_digest: receipt.digest_hex, model_digest: model.digest_hex, forecast_digest: forecast.digest_hex, ok: forecast.ok }
+  }) in
+  {
+    ok: true,
+    agent: "forecasting",
+    institution: institution,
+    node_address: node_address,
+    published_count: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, publish_computation_receipt, publish_forecast, publish_economic_model, run }
