@@ -12,25 +12,26 @@ import("archive") as arch
 import("economy") as econ
 
 let port = 18080
-let node_name = "anka-node"
 let local_address = "http://localhost:18080"
 let db_path = "file:out/node/anka_node.db?cache=shared&mode=rwc"
 
 let db = sqlite.open(db_path)
 let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
 
-let boot_node = node.new_node(node_name)
+let op_config = ncfg.load_config(db)
+let op_identity = ncfg.load_or_generate_identity(db, op_config)
 let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'")
 let initial_state = if list.len(existing) > 0 then
   json.decode(existing[0].value)
 else
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(boot_node), "')"])) in boot_node
+  let fresh = node.new_node_with_identity(op_identity.node_id, op_identity.private_key_hex, op_identity.public_key_hex) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(fresh), "')"])) in fresh
 
 let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'")
 let initial_peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else []
 
 let registry_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'registry'")
-let empty_registry = reg.genesis(boot_node, 0)
+let empty_registry = reg.genesis(initial_state, 0)
 let initial_registry = if list.len(registry_rows) > 0 then json.decode(registry_rows[0].value) else empty_registry
 
 let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'")

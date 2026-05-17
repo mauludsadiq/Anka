@@ -142,4 +142,4 @@ fn new_node_with_identity(node_id, private_key_hex, public_key_hex) {
   }
 }
 
-export { new_node, new_node_generated, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }
+export { new_node, new_node_generated, new_node_with_identity, publish, has_claim, fetch_claim, receive_gossip, accept_envelope, structurally_witness, receive_witness, file_challenge, receive_challenge, sync_from, node_summary }
