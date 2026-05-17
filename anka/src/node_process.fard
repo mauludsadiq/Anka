@@ -9,6 +9,7 @@ import("node_config") as ncfg
 import("node_server") as server
 import("registry") as reg
 import("archive") as arch
+import("economy") as econ
 
 let port = 18080
 let node_name = "anka-node"
@@ -49,11 +50,14 @@ let _ = net.serve(port, fn(req) {
   let subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else [] in
   let arc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'") in
   let arc = if list.len(arc_rows) > 0 then json.decode(arc_rows[0].value) else arch.archive_empty() in
-  let result = server.handle(state, peers, local_address, registry, subscriptions, arc, req) in
+  let led_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'ledger'") in
+  let ledger = if list.len(led_rows) > 0 then json.decode(led_rows[0].value) else econ.empty_ledger() in
+  let result = server.handle(state, peers, local_address, registry, subscriptions, arc, ledger, req) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", json.encode(result.next_registry), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", json.encode(result.next_subscriptions), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", json.encode(result.next_archive), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('ledger', '", json.encode(result.next_ledger), "')"])) in
   result.response
 })
