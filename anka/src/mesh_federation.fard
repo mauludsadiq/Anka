@@ -1,0 +1,161 @@
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+import("std/process") as process
+
+// Cross-Mesh Federation
+// Multiple independent ANKA meshes federate.
+// Each mesh has its own origin, claim spaces, and node identities.
+// Cross-mesh citations use the format: mesh:{mesh_id}:{digest}
+//
+// Federation protocol:
+//   1. Mesh A registers Mesh B's origin address
+//   2. Mesh A fetches Mesh B's genesis to verify identity
+//   3. Mesh A nodes can fetch claims from Mesh B by digest
+//   4. Cross-mesh citations are recorded with source mesh metadata
+//   5. Federated queries resolve across mesh boundaries
+//
+// Trust model:
+//   - Each mesh's genesis is its root of trust
+//   - Cross-mesh witnesses carry the originating mesh's reputation
+//   - Claims cited across meshes are verified against source genesis
+
+fn make_mesh_identity(mesh_id, origin_address, genesis_digest, description) {
+  {
+    mesh_id: mesh_id,
+    origin_address: origin_address,
+    genesis_digest: genesis_digest,
+    description: description,
+    registered_at: 0
+  }
+}
+
+fn mesh_citation(mesh_id, digest_hex) {
+  str.concat(["mesh:", mesh_id, ":", digest_hex])
+}
+
+fn parse_mesh_citation(citation) {
+  if str.starts_with(citation, "mesh:") then
+    let without_prefix = str.slice(citation, 5, str.len(citation)) in
+    let parts = str.split(without_prefix, ":") in
+    if list.len(parts) >= 2 then
+      let mesh_id = list.head(parts) in
+      let digest = str.join(list.tail(parts), ":") in
+      { ok: true, mesh_id: mesh_id, digest_hex: digest }
+    else
+      { ok: false, reason: "invalid mesh citation format" }
+  else
+    { ok: false, reason: "not a mesh citation" }
+}
+
+fn is_mesh_citation(ref) {
+  str.starts_with(ref, "mesh:")
+}
+
+fn fetch_genesis(origin_address) {
+  let captured = process.capture("curl", ["-s", "-m", "5",
+    str.concat([origin_address, "/genesis"])]) in
+  if !captured.ok || str.len(captured.stdout) == 0 then
+    { ok: false, reason: "failed to fetch genesis" }
+  else
+    let data = json.decode(captured.stdout) in
+    if !data.ok then { ok: false, reason: "genesis endpoint returned error" }
+    else { ok: true, genesis: data.genesis }
+}
+
+fn fetch_external_claim(origin_address, digest_hex) {
+  let captured = process.capture("curl", ["-s", "-m", "5",
+    str.concat([origin_address, "/claim/", digest_hex])]) in
+  if !captured.ok || str.len(captured.stdout) == 0 then
+    { ok: false, reason: "failed to fetch external claim" }
+  else
+    let data = json.decode(captured.stdout) in
+    if !data.ok then { ok: false, reason: "claim not found in external mesh" }
+    else { ok: true, envelope: data.envelope }
+}
+
+fn fetch_external_belief(origin_address, claim_space, subject) {
+  let captured = process.capture("curl", ["-s", "-m", "5",
+    str.concat([origin_address, "/query/", claim_space, "/", subject])]) in
+  if !captured.ok || str.len(captured.stdout) == 0 then
+    { ok: false, reason: "failed to query external mesh" }
+  else
+    let data = json.decode(captured.stdout) in
+    if !data.ok then { ok: false, reason: "query failed on external mesh" }
+    else
+      let winner = data.single_winner in
+      { ok: true, finding: winner.winner_value, score: winner.winner_score, digest_hex: winner.winner_digest_hex }
+}
+
+fn empty_federation_store() {
+  { meshes: {}, mesh_index: [], cross_citations: [] }
+}
+
+fn register_mesh(store, identity) {
+  let next_meshes = rec.set(store.meshes, identity.mesh_id, identity) in
+  let next_index = if list.any(store.mesh_index, fn(id) { id == identity.mesh_id }) then
+    store.mesh_index
+  else
+    list.append(store.mesh_index, identity.mesh_id)
+  in
+  { ...store, meshes: next_meshes, mesh_index: next_index }
+}
+
+fn get_mesh(store, mesh_id) {
+  rec.getOr(store.meshes, mesh_id, null)
+}
+
+fn record_cross_citation(store, local_digest, mesh_id, external_digest, claim_space, subject) {
+  let citation = {
+    local_digest: local_digest,
+    mesh_id: mesh_id,
+    external_digest: external_digest,
+    claim_space: claim_space,
+    subject: subject,
+    citation_ref: mesh_citation(mesh_id, external_digest)
+  } in
+  { ...store, cross_citations: list.append(store.cross_citations, citation) }
+}
+
+fn federated_query(federation_store, claim_space, subject) {
+  let local_results = [] in
+  let external_results = list.fold(federation_store.mesh_index, [], fn(acc, mesh_id) {
+    let mesh = get_mesh(federation_store, mesh_id) in
+    if mesh == null then acc
+    else
+      let result = fetch_external_belief(mesh.origin_address, claim_space, subject) in
+      if !result.ok then acc
+      else list.append(acc, {
+        mesh_id: mesh_id,
+        origin_address: mesh.origin_address,
+        finding: result.finding,
+        score: result.score,
+        digest_hex: result.digest_hex,
+        citation: mesh_citation(mesh_id, result.digest_hex)
+      })
+  }) in
+  {
+    claim_space: claim_space,
+    subject: subject,
+    mesh_count: list.len(federation_store.mesh_index),
+    results: external_results,
+    result_count: list.len(external_results)
+  }
+}
+
+fn federation_summary(store) {
+  {
+    registered_meshes: list.len(store.mesh_index),
+    mesh_ids: store.mesh_index,
+    cross_citation_count: list.len(store.cross_citations)
+  }
+}
+
+export {
+  make_mesh_identity, mesh_citation, parse_mesh_citation, is_mesh_citation,
+  fetch_genesis, fetch_external_claim, fetch_external_belief,
+  empty_federation_store, register_mesh, get_mesh, record_cross_citation,
+  federated_query, federation_summary
+}

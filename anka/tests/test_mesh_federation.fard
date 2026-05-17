@@ -1,0 +1,59 @@
+import("../src/mesh_federation") as mf
+import("std/list") as list
+import("std/str") as str
+
+test "mesh citation format" {
+  let cite = mf.mesh_citation("climate-mesh", "sha256:abc123") in
+  cite == "mesh:climate-mesh:sha256:abc123"
+}
+
+test "parse valid mesh citation" {
+  let result = mf.parse_mesh_citation("mesh:climate-mesh:sha256:abc123") in
+  result.ok && result.mesh_id == "climate-mesh" && result.digest_hex == "sha256:abc123"
+}
+
+test "parse invalid citation" {
+  let result = mf.parse_mesh_citation("sha256:abc123") in
+  !result.ok
+}
+
+test "is mesh citation: true for mesh: prefix" {
+  mf.is_mesh_citation("mesh:climate-mesh:sha256:abc123")
+}
+
+test "is mesh citation: false for regular digest" {
+  !mf.is_mesh_citation("sha256:abc123")
+}
+
+test "register mesh and retrieve" {
+  let identity = mf.make_mesh_identity("climate-mesh", "http://localhost:18090", "sha256:genesis001", "Climate mesh") in
+  let store = mf.register_mesh(mf.empty_federation_store(), identity) in
+  let retrieved = mf.get_mesh(store, "climate-mesh") in
+  retrieved != null && retrieved.mesh_id == "climate-mesh"
+}
+
+test "federation summary counts meshes" {
+  let id1 = mf.make_mesh_identity("mesh-a", "http://localhost:18090", "sha256:g1", "Mesh A") in
+  let id2 = mf.make_mesh_identity("mesh-b", "http://localhost:18091", "sha256:g2", "Mesh B") in
+  let store = mf.register_mesh(mf.register_mesh(mf.empty_federation_store(), id1), id2) in
+  let summary = mf.federation_summary(store) in
+  summary.registered_meshes == 2
+}
+
+test "duplicate mesh registration is idempotent" {
+  let identity = mf.make_mesh_identity("mesh-a", "http://localhost:18090", "sha256:g1", "Mesh A") in
+  let store = mf.register_mesh(mf.register_mesh(mf.empty_federation_store(), identity), identity) in
+  mf.federation_summary(store).registered_meshes == 1
+}
+
+test "record cross citation" {
+  let store = mf.empty_federation_store() in
+  let next = mf.record_cross_citation(store, "sha256:local001", "climate-mesh", "sha256:ext001", "research.result.claims", "CO2-2024") in
+  next.cross_citations |> list.len == 1
+}
+
+test "empty federation store" {
+  let store = mf.empty_federation_store() in
+  let summary = mf.federation_summary(store) in
+  summary.registered_meshes == 0 && summary.cross_citation_count == 0
+}

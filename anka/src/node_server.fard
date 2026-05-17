@@ -24,6 +24,7 @@ import("dispute_resolution") as dr
 import("reputation") as rep
 import("longitudinal") as lon
 import("lineage") as lin
+import("mesh_federation") as mf
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -37,6 +38,7 @@ import("dispute_resolution") as dr
 import("reputation") as rep
 import("longitudinal") as lon
 import("lineage") as lin
+import("mesh_federation") as mf
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -270,6 +272,41 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
     let next_state = rec.set(state, "capability_store", next_store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if req.path == "/federation/mesh" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    let mesh_id = rec.getOr(body, "mesh_id", body.origin_address) in
+    let description = rec.getOr(body, "description", "") in
+    let identity = mf.make_mesh_identity(mesh_id, body.origin_address, "", description) in
+    let next_store = mf.register_mesh(fed_store, identity) in
+    let next_state = rec.set(state, "federation_store", next_store) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, mesh_id: mesh_id, registered: true, summary: mf.federation_summary(next_store) })
+  else if req.path == "/federation/meshes" && req.method == "GET" then
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, summary: mf.federation_summary(fed_store) })
+  else if str.starts_with(req.path, "/federation/query/") && req.method == "GET" then
+    let rest = str.slice(req.path, 18, str.len(req.path)) in
+    let parts = str.split(rest, "/") in
+    let claim_space = list.head(parts) in
+    let subject = str.join(list.tail(parts), "/") in
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    let result = mf.federated_query(fed_store, claim_space, subject) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, federated_query: result })
+  else if str.starts_with(req.path, "/federation/claim/") && req.method == "GET" then
+    let rest = str.slice(req.path, 18, str.len(req.path)) in
+    let parts = str.split(rest, "/") in
+    let mesh_id = list.head(parts) in
+    let digest = str.join(list.tail(parts), "/") in
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    let mesh = mf.get_mesh(fed_store, mesh_id) in
+    if mesh == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, str.concat(["mesh not registered: ", mesh_id]))
+    else
+      let result = mf.fetch_external_claim(mesh.origin_address, digest) in
+      if !result.ok then
+        error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 502, result.reason)
+      else
+        json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, mesh_id: mesh_id, citation: mf.mesh_citation(mesh_id, digest), envelope: result.envelope })
   else if str.starts_with(req.path, "/lineage/model/") && req.method == "GET" then
     let model_id = str.slice(req.path, 15, str.len(req.path)) in
     let report = lin.model_lineage_report(state.claims, model_id, 5) in
