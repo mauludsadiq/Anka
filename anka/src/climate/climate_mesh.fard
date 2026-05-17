@@ -1,0 +1,64 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/process") as process
+
+// Climate Mesh Setup
+// Registers climate claim spaces on the origin and
+// runs all four agent types against the 5-node mesh.
+//
+// Claim spaces:
+//   research.result.claims  (already registered — interpretive/plural)
+//   dataset.provenance      (already registered — invariant/single-winner)
+//   model.training.trace    (new — interpretive/plural)
+//   reproducibility.results (new — invariant/single-winner)
+//   climate.policy.positions (new — interpretive/plural)
+
+fn register_space(origin_address, name, category, convergence_policy) {
+  let result = process.capture("curl", ["-s", "-m", "5", "-X", "POST",
+    "-H", "Content-Type: application/json",
+    "-d", json.encode({
+      claim_space_name: name,
+      category: category,
+      convergence_policy: convergence_policy
+    }),
+    str.concat([origin_address, "/federation/propose"])]) in
+  if result.ok && str.len(result.stdout) > 0 then
+    let d = json.decode(result.stdout) in
+    { ok: d.ok, space: name, committed: d.committed }
+  else
+    { ok: false, space: name, reason: "curl failed" }
+}
+
+fn setup_climate_spaces(origin_address) {
+  let spaces = [
+    { name: "model.training.trace", category: "interpretive", convergence_policy: "plural" },
+    { name: "reproducibility.results", category: "invariant", convergence_policy: "single-winner" },
+    { name: "climate.policy.positions", category: "interpretive", convergence_policy: "plural" }
+  ] in
+  list.map(spaces, fn(s) {
+    register_space(origin_address, s.name, s.category, s.convergence_policy)
+  })
+}
+
+fn setup_node_subscriptions(node_addresses, climate_spaces) {
+  list.map(node_addresses, fn(addr) {
+    list.map(climate_spaces, fn(cs) {
+      process.capture("curl", ["-s", "-m", "3", "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-d", json.encode({ claim_space: cs }),
+        str.concat([addr, "/subscribe/shard"])])
+    })
+  })
+}
+
+let climate_spaces = [
+  "research.result.claims",
+  "dataset.provenance",
+  "model.training.trace",
+  "reproducibility.results",
+  "climate.policy.positions"
+]
+
+export { register_space, setup_climate_spaces, setup_node_subscriptions, climate_spaces }

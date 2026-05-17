@@ -1,0 +1,72 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Policy Agent
+// Role: read collapsed research findings and publish policy positions.
+// Subscribes to: research.result.claims
+// Publishes to:  climate.policy.positions
+//
+// Deliberation: only publish policy when research finding has
+// sufficient witness score (min_witness_score threshold).
+// Policy position cites the research finding by digest.
+
+fn make_dalil(node_address) {
+  {
+    read: fn(addr, cs, subj) {
+      let r = http.get(str.concat([addr, "/query/", cs, "/", subj])) in
+      if r.status != 200 then { ok: false }
+      else
+        let d = json.decode(r.body) in
+        { ok: true, finding: d.single_winner.winner_value, score: d.single_winner.winner_score, digest_hex: d.single_winner.winner_digest_hex }
+    },
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn derive_policy(subject, finding, score) {
+  if str.contains(finding, "critical") || str.contains(finding, "severe") then
+    str.concat(["URGENT ACTION REQUIRED on ", subject, ": ", finding])
+  else if score >= 2 then
+    str.concat(["POLICY RECOMMENDATION on ", subject, ": ", finding])
+  else
+    str.concat(["MONITORING ", subject, ": ", finding, " (awaiting further verification)"])
+}
+
+fn run(node_address, institution, subjects, min_witness_score, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let results = list.map(subjects, fn(subject) {
+    let reading = dalil.read(node_address, "research.result.claims", subject) in
+    if !reading.ok then
+      { subject: subject, ok: false, reason: "no finding" }
+    else if reading.score < min_witness_score then
+      { subject: subject, ok: false, reason: str.concat(["score ", str.from(reading.score), " below threshold"]) }
+    else
+      let policy = derive_policy(subject, reading.finding, reading.score) in
+      let result = dalil.compose(node_address, "climate.policy.positions", subject, policy,
+        [reading.digest_hex], timestamp) in
+      { subject: subject, ok: result.ok, policy_digest: result.digest_hex, based_on: reading.digest_hex, score: reading.score }
+  }) in
+  {
+    ok: true,
+    agent: "policy",
+    institution: institution,
+    node_address: node_address,
+    subjects_evaluated: list.len(subjects),
+    policies_published: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, derive_policy, run }

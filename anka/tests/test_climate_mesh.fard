@@ -1,0 +1,93 @@
+import("../src/climate/climate_lab_agent") as lab
+import("../src/climate/replication_agent") as replication
+import("../src/climate/dataset_provenance_agent") as provenance
+import("../src/climate/policy_agent") as policy
+import("std/list") as list
+import("std/str") as str
+
+test "climate lab agent derive_policy is pure" {
+  let p = policy.derive_policy("arctic-ice", "critical threshold exceeded", 3) in
+  str.len(p) > 0
+}
+
+test "replication agent deliberates: witness when refs present" {
+  let claim = {
+    digest_hex: "sha256:test001",
+    claim_space: "research.result.claims",
+    subject: "CO2-concentration",
+    finding: "421.3 ppm",
+    evidence_refs: ["sha256:provenance001"],
+    issuer: "oxford-node",
+    timestamp: 1775710900
+  } in
+  let delib = replication.deliberate(claim, {}) in
+  delib.action == "witness"
+}
+
+test "replication agent deliberates: challenge when no refs" {
+  let claim = {
+    digest_hex: "sha256:test002",
+    claim_space: "research.result.claims",
+    subject: "CO2-concentration",
+    finding: "421.3 ppm",
+    evidence_refs: [],
+    issuer: "unknown-node",
+    timestamp: 1775710900
+  } in
+  let delib = replication.deliberate(claim, {}) in
+  delib.action == "challenge"
+}
+
+test "replication agent ignores already-seen claims" {
+  let claim = {
+    digest_hex: "sha256:test003",
+    claim_space: "research.result.claims",
+    subject: "sea-level-rise",
+    finding: "3.7mm/year",
+    evidence_refs: ["sha256:ref001"],
+    issuer: "mit-node",
+    timestamp: 1775710900
+  } in
+  let seen = { "sha256:test003": true } in
+  let delib = replication.deliberate(claim, seen) in
+  delib.action == "ignore"
+}
+
+test "replication agent ignores non-research claims" {
+  let claim = {
+    digest_hex: "sha256:test004",
+    claim_space: "dataset.provenance",
+    subject: "NOAA-SST-2024",
+    finding: "sea surface temperature dataset",
+    evidence_refs: [],
+    issuer: "noaa-node",
+    timestamp: 1775710900
+  } in
+  let delib = replication.deliberate(claim, {}) in
+  delib.action == "ignore"
+}
+
+test "policy agent derives urgent policy for critical finding" {
+  let policy_text = policy.derive_policy("arctic-ice", "critical melting rate detected", 3) in
+  str.starts_with(policy_text, "URGENT ACTION REQUIRED")
+}
+
+test "policy agent derives recommendation for witnessed finding" {
+  let policy_text = policy.derive_policy("sea-level-rise", "3.7mm/year increase", 3) in
+  str.starts_with(policy_text, "POLICY RECOMMENDATION")
+}
+
+test "policy agent monitors unverified finding" {
+  let policy_text = policy.derive_policy("methane-levels", "slight increase noted", 1) in
+  str.starts_with(policy_text, "MONITORING")
+}
+
+test "provenance refs detection: has refs" {
+  let claim = { evidence_refs: ["sha256:abc"] } in
+  replication.has_provenance_refs(claim)
+}
+
+test "provenance refs detection: no refs" {
+  let claim = { evidence_refs: [] } in
+  !replication.has_provenance_refs(claim)
+}

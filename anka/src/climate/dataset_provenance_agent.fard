@@ -1,0 +1,59 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+
+// Dataset Provenance Agent
+// Role: register datasets and track their lineage.
+// Publishes to: dataset.provenance
+//
+// A provenance record captures:
+//   subject:  dataset identifier (e.g. "NOAA-SST-2024-v3")
+//   finding:  content-addressed description with source URL and version
+//   refs:     prior dataset versions this one derives from
+
+fn make_dalil(node_address) {
+  {
+    compose: fn(addr, cs, subj, finding, refs, ts) {
+      let result = http.post(str.concat([addr, "/publish"]), json.encode({
+        claim_space: cs, subject: subj, predicate: "reported_finding",
+        object: finding, evidence_refs: refs, timestamp_unix_secs: ts
+      })) in
+      if result.status == 200 then
+        let d = json.decode(result.body) in
+        { ok: true, digest_hex: d.digest_hex, cite_as: str.concat(["anka:", d.digest_hex]) }
+      else { ok: false, reason: "publish failed" }
+    }
+  }
+}
+
+fn register_dataset(node_address, dataset_id, description, source_url, version, parent_refs, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let finding = str.concat([description, " | source:", source_url, " | version:", version]) in
+  dalil.compose(node_address, "dataset.provenance", dataset_id, finding, parent_refs, timestamp)
+}
+
+fn run(node_address, institution, datasets, timestamp) {
+  let results = list.map(datasets, fn(d) {
+    let result = register_dataset(
+      node_address,
+      d.dataset_id,
+      d.description,
+      d.source_url,
+      d.version,
+      d.parent_refs,
+      timestamp
+    ) in
+    { dataset_id: d.dataset_id, digest_hex: result.digest_hex, ok: result.ok }
+  }) in
+  {
+    ok: true,
+    agent: "dataset-provenance",
+    institution: institution,
+    node_address: node_address,
+    registered_count: list.len(list.filter(results, fn(r) { r.ok })),
+    results: results
+  }
+}
+
+export { make_dalil, register_dataset, run }

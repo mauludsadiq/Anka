@@ -1,0 +1,110 @@
+import("std/http") as http
+import("std/json") as json
+import("std/str") as str
+import("std/list") as list
+import("std/rec") as rec
+
+// Replication Agent
+// Role: verify research findings by checking dataset provenance.
+// Subscribes to: research.result.claims, dataset.provenance
+// Action: witness if finding has valid provenance citation, challenge otherwise.
+//
+// Deliberation logic:
+//   - If claim has evidence_refs pointing to dataset.provenance claims: witness
+//   - If claim has no evidence refs: challenge (unverifiable)
+//   - If already acted on digest: ignore
+
+fn make_dalil(node_address) {
+  {
+    feed: fn(addr, claim_spaces, since_ts) {
+      let known = http.get(str.concat([addr, "/known"])) in
+      if known.status != 200 then { ok: false, claims: [] }
+      else
+        let kd = json.decode(known.body) in
+        let digests = kd.known_digests in
+        let claims = list.fold(digests, [], fn(acc, digest) {
+          let r = http.get(str.concat([addr, "/claim/", digest])) in
+          if r.status != 200 then acc
+          else
+            let env = json.decode(r.body).envelope in
+            let in_space = list.any(claim_spaces, fn(cs) { cs == env.claim.claim_space }) in
+            if !in_space then acc
+            else if env.claim.timestamp_unix_secs <= since_ts then acc
+            else list.append(acc, {
+              digest_hex: digest,
+              claim_space: env.claim.claim_space,
+              subject: env.claim.subject,
+              finding: env.claim.object,
+              evidence_refs: env.claim.evidence_refs,
+              issuer: env.claim.issuer_node_id,
+              timestamp: env.claim.timestamp_unix_secs
+            })
+        }) in
+        { ok: true, claims: claims }
+    },
+    post_node: fn(addr, path, body) {
+      let result = http.post(str.concat([addr, path]), json.encode(body)) in
+      if result.status == 200 then { ok: true, data: json.decode(result.body) }
+      else { ok: false }
+    }
+  }
+}
+
+fn has_provenance_refs(claim) {
+  list.len(claim.evidence_refs) > 0
+}
+
+fn deliberate(claim, seen_digests) {
+  let digest = claim.digest_hex in
+  if rec.has(seen_digests, digest) then
+    { action: "ignore", reason: "already acted", digest: digest }
+  else if claim.claim_space != "research.result.claims" then
+    { action: "ignore", reason: "not a research claim", digest: digest }
+  else if has_provenance_refs(claim) then
+    { action: "witness", reason: "has provenance citations", digest: digest }
+  else
+    { action: "challenge", reason: "no provenance — unverifiable finding", digest: digest }
+}
+
+fn run(node_address, institution, since_ts, timestamp) {
+  let dalil = make_dalil(node_address) in
+  let feed = dalil.feed(node_address, ["research.result.claims"], since_ts) in
+  if !feed.ok then { ok: false, reason: "feed failed" }
+  else
+    let result = list.fold(feed.claims, { witnessed: 0, challenged: 0, ignored: 0, seen: {} }, fn(acc, claim) {
+      let delib = deliberate(claim, acc.seen) in
+      let next_seen = rec.set(acc.seen, claim.digest_hex, true) in
+      if delib.action == "witness" then
+        let w = dalil.post_node(node_address, "/witness", {
+          digest_hex: claim.digest_hex,
+          witness_node_id: str.concat([institution, "-replication-agent"]),
+          validation_type: "provenance_verified",
+          timestamp_unix_secs: timestamp
+        }) in
+        { witnessed: acc.witnessed + 1, challenged: acc.challenged, ignored: acc.ignored, seen: next_seen }
+      else if delib.action == "challenge" then
+        let c = dalil.post_node(node_address, "/challenge", {
+          target_digest_hex: claim.digest_hex,
+          challenger_node_id: str.concat([institution, "-replication-agent"]),
+          kind: "methodological",
+          reasoning: delib.reason,
+          challenger_signature_hex: "sig",
+          timestamp_unix_secs: timestamp
+        }) in
+        { witnessed: acc.witnessed, challenged: acc.challenged + 1, ignored: acc.ignored, seen: next_seen }
+      else
+        { ...acc, ignored: acc.ignored + 1, seen: next_seen }
+    }) in
+    {
+      ok: true,
+      agent: "replication",
+      institution: institution,
+      node_address: node_address,
+      observed: list.len(feed.claims),
+      witnessed: result.witnessed,
+      challenged: result.challenged,
+      ignored: result.ignored
+    }
+}
+
+export { make_dalil, deliberate, has_provenance_refs, run }
