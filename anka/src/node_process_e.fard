@@ -19,7 +19,12 @@ let db_path = "file:out/node/anka_node_e.db?cache=shared&mode=rwc"
 let db = sqlite.open(db_path)
 let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
 
-let op_config = ncfg.load_config(db)
+let op_config_raw = ncfg.load_config(db)
+let op_config = if op_config_raw.local_address == local_address then op_config_raw
+  else
+    let updated = { ...op_config_raw, local_address: local_address } in
+    let _ = ncfg.save_config(db, updated) in
+    updated
 let op_identity = ncfg.load_or_generate_identity(db, op_config)
 let existing = sqlite.query(db, "SELECT value FROM state WHERE key = 'node_state'")
 let initial_state = if list.len(existing) > 0 then

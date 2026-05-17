@@ -9,7 +9,9 @@ import("node") as node
 import("origin") as origin
 import("discovery") as disc
 import("origin_federation") as fed
+import("capability_store") as caps
 import("origin_federation") as fed
+import("capability_store") as caps
 
 let port = 18091
 let node_name = "anka-origin"
@@ -179,6 +181,24 @@ let _ = net.serve(port, fn(req) {
     let fp = if list.len(fp_rows) > 0 then json.decode(fp_rows[0].value) else [] in
     let status = fed.federation_status(str.concat(["http://localhost:", str.from(port)]), fp) in
     { status: 200, body: json.encode({ ok: true, status: status }), content_type: "application/json" }
+  else if req.path == "/capability/issue" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let cap = caps.make_capability(
+      boot_node.node_id,
+      body.holder_node_id,
+      body.claim_space,
+      body.rights,
+      body.expires_unix_secs,
+      str.concat([body.holder_node_id, ":", str.from(dt.now())])
+    ) in
+    let envelope = caps.sign_capability(cap, boot_node.node_secret) in
+    { status: 200, body: json.encode({ ok: true, envelope: envelope, issuer_node_id: boot_node.node_id, issuer_public_key_hex: boot_node.public_key_hex }), content_type: "application/json" }
+  else if req.path == "/capability/verify" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let report = caps.verify_capability(body.envelope, boot_node.public_key_hex) in
+    { status: 200, body: json.encode({ ok: true, valid: report.valid, digest_ok: report.digest_ok, signature_ok: report.signature_ok }), content_type: "application/json" }
+  else if req.path == "/capability/public_key" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, node_id: boot_node.node_id, public_key_hex: boot_node.public_key_hex }), content_type: "application/json" }
   else
     { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), content_type: "application/json" }
 })

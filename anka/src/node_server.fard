@@ -122,7 +122,8 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     else
     let body = json.decode(req.body) in
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
-    let cap_check = if caps.capability_count(cap_store) == 0 then { allowed: true }
+    let locked = rec.getOr(state, "capability_locked", false) in
+    let cap_check = if !locked && caps.capability_count(cap_store) == 0 then { allowed: true }
       else caps.check_capability(cap_store, state.node_id, body.claim_space, "publish", now) in
     if !cap_check.allowed then
       error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 403, str.concat(["capability required: ", body.claim_space]))
@@ -222,9 +223,44 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
   else if req.path == "/capability" && req.method == "POST" then
     let body = json.decode(req.body) in
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    let issuer_pk = body.issuer_public_key_hex in
+    let verified = if issuer_pk == null || issuer_pk == "" then { valid: true }
+      else caps.verify_capability(body.envelope, issuer_pk) in
+    if !verified.valid then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 400, "invalid capability signature")
+    else
     let result = caps.store_capability(cap_store, body.envelope) in
     let next_state = rec.set(state, "capability_store", result.store) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, stored: result.stored, count: caps.capability_count(result.store) })
+  else if req.path == "/capability/issue" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    let can_issue = caps.check_capability(cap_store, state.node_id, body.claim_space, "admin", now) in
+    if !can_issue.allowed then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 403, "no admin capability to issue")
+    else
+    let cap = caps.make_capability(
+      state.node_id,
+      body.holder_node_id,
+      body.claim_space,
+      body.rights,
+      body.expires_unix_secs,
+      str.concat([body.holder_node_id, ":", str.from(now)])
+    ) in
+    let envelope = caps.sign_capability(cap, state.node_secret) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, envelope: envelope, issuer_public_key_hex: state.public_key_hex })
+  else if req.path == "/capability/revoke" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
+    let next_store = caps.revoke_capability(cap_store, body.digest_hex) in
+    let next_state = rec.set(state, "capability_store", next_store) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, revoked: body.digest_hex })
+  else if req.path == "/capability/lock" && req.method == "POST" then
+    let next_state = rec.set(state, "capability_locked", true) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, locked: true })
+  else if req.path == "/capability/unlock" && req.method == "POST" then
+    let next_state = rec.set(state, "capability_locked", false) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, locked: false })
   else if req.path == "/capabilities" && req.method == "GET" then
     let cap_store = rec.getOr(state, "capability_store", caps.empty_capability_store()) in
     json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, count: caps.capability_count(cap_store), open: caps.capability_count(cap_store) == 0 })
