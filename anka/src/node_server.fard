@@ -65,11 +65,76 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
   let limits = rl.default_limits() in
   let rate_counts = rec.getOr(state, "rate_counts", {}) in
   if req.path == "/health" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: state.node_id })
+    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
+    let idx_spaces = qi.spaces(idx) in
+    let rep_state = rec.getOr(state, "reputation", rep.empty()) in
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    let fed_summary = mf.federation_summary(fed_store) in
+    let metrics = rec.getOr(state, "metrics", { publish_count: 0, witness_count: 0, challenge_count: 0, gossip_sent: 0, gossip_received: 0 }) in
+    let peer_count = list.len(peers) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
+      ok: true,
+      node_id: state.node_id,
+      status: "online",
+      claim_count: list.len(rec.keys(state.claims)),
+      witness_count: list.len(rec.keys(state.witnesses)),
+      challenge_count: list.len(rec.keys(state.challenges)),
+      peer_count: peer_count,
+      index: {
+        spaces: list.len(idx_spaces),
+        claim_spaces: idx_spaces,
+        fresh: list.len(idx_spaces) > 0 || list.len(rec.keys(state.claims)) == 0
+      },
+      reputation_nodes: list.len(rec.keys(rep_state)),
+      federation: { registered_meshes: fed_summary.registered_meshes, mesh_ids: fed_summary.mesh_ids },
+      metrics: metrics,
+      archive: { snapshot_count: arch.snapshot_count(arc), receipt_count: list.len(arc.receipt_log) }
+    })
   else if req.path == "/known" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, known_digests: state.known_digests, node_id: state.node_id })
   else if req.path == "/sync" && req.method == "GET" then
-    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, node_id: state.node_id, claim_count: list.len(rec.keys(state.claims)), witness_count: list.len(rec.keys(state.witnesses)), challenge_count: list.len(rec.keys(state.challenges)) })
+    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
+    let metrics = rec.getOr(state, "metrics", { publish_count: 0, witness_count: 0, challenge_count: 0, gossip_sent: 0, gossip_received: 0 }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
+      ok: true,
+      node_id: state.node_id,
+      claim_count: list.len(rec.keys(state.claims)),
+      witness_count: list.len(rec.keys(state.witnesses)),
+      challenge_count: list.len(rec.keys(state.challenges)),
+      peer_count: list.len(peers),
+      index_spaces: list.len(qi.spaces(idx)),
+      metrics: metrics
+    })
+  else if req.path == "/metrics" && req.method == "GET" then
+    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
+    let metrics = rec.getOr(state, "metrics", { publish_count: 0, witness_count: 0, challenge_count: 0, gossip_sent: 0, gossip_received: 0 }) in
+    let fed_store = rec.getOr(state, "federation_store", mf.empty_federation_store()) in
+    let fed_summary = mf.federation_summary(fed_store) in
+    let idx_spaces = qi.spaces(idx) in
+    let space_counts = list.map(idx_spaces, fn(cs) {
+      let subjects = qi.subjects_in_space(idx, cs) in
+      { claim_space: cs, subject_count: list.len(subjects), claim_count: list.fold(subjects, 0, fn(acc, s) { acc + qi.claim_count_for(idx, cs, s) }) }
+    }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
+      ok: true,
+      node_id: state.node_id,
+      counters: {
+        claims_published: metrics.publish_count,
+        witnesses_recorded: metrics.witness_count,
+        challenges_filed: metrics.challenge_count,
+        gossip_sent: metrics.gossip_sent,
+        gossip_received: metrics.gossip_received
+      },
+      index: {
+        total_spaces: list.len(idx_spaces),
+        total_claims_indexed: list.fold(space_counts, 0, fn(acc, s) { acc + s.claim_count }),
+        spaces: space_counts
+      },
+      peers: { count: list.len(peers), addresses: peers },
+      federation: { registered_meshes: fed_summary.registered_meshes, cross_citations: fed_summary.cross_citation_count },
+      reputation: { tracked_nodes: list.len(rec.keys(rec.getOr(state, "reputation", rep.empty()))) },
+      archive: { snapshots: arch.snapshot_count(arc), receipts: list.len(arc.receipt_log) }
+    })
   else if req.path == "/audit" && req.method == "GET" then
     json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, snapshot_count: arch.snapshot_count(arc), receipt_count: list.len(arc.receipt_log) })
   else if str.starts_with(req.path, "/audit/trail/local/") && req.method == "GET" then
@@ -153,7 +218,10 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let idx = rec.getOr(pub.node, "query_index", qi.empty_index()) in
     let next_idx = qi.index_claim(idx, pub.envelope) in
     let pub_node2 = rec.set(pub.node, "query_index", next_idx) in
-    json_response(pub_node2, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
+    let metrics = rec.getOr(pub_node2, "metrics", { publish_count: 0, witness_count: 0, challenge_count: 0, gossip_sent: 0, gossip_received: 0 }) in
+    let next_metrics = { ...metrics, publish_count: metrics.publish_count + 1, gossip_sent: metrics.gossip_sent + list.len(peers) } in
+    let pub_node3 = rec.set(pub_node2, "metrics", next_metrics) in
+    json_response(pub_node3, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, digest_hex: pub.envelope.digest_hex, gossip: pub.gossip, broadcast_count: list.len(peers) })
   else if str.starts_with(req.path, "/claim/") && req.method == "GET" then
     let digest = str.slice(req.path, 7, str.len(req.path)) in
     if node.has_claim(state, digest) then
@@ -226,6 +294,9 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let widx = rec.getOr(next, "query_index", qi.empty_index()) in
     let widx2 = qi.index_witness(widx, body.witness_node_id, body.digest_hex) in
     let next = rec.set(next, "query_index", widx2) in
+    let wmetrics = rec.getOr(next, "metrics", { publish_count: 0, witness_count: 0, challenge_count: 0, gossip_sent: 0, gossip_received: 0 }) in
+    let next_wmetrics = { ...wmetrics, witness_count: wmetrics.witness_count + 1 } in
+    let next = rec.set(next, "metrics", next_wmetrics) in
     let ledger = econ.reward_witness(ledger, body.witness_node_id, "anka.witness", body.digest_hex).ledger in
     json_response(next, peers, local_address, registry, subscriptions, shard_subs, arc2, ledger, { ok: true, node_id: next.node_id })
   else if req.path == "/challenge" && req.method == "POST" then
@@ -537,50 +608,7 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
         }
       })
     })
-  else if str.starts_with(req.path, "/query/") && req.method == "GET" then
-    let parts = str.split(req.path, "/") in
-    let claim_space = list.get(parts, 2) in
-    let subject = list.get(parts, 3) in
-    let idx = rec.getOr(state, "query_index", qi.empty_index()) in
-    let matching_digests = qi.lookup_digests(idx, claim_space, subject) in
-    let matching = list.map(matching_digests, fn(d) { rec.getOr(state.claims, d, null) }) in
-    let matching = list.filter(matching, fn(env) { env != null }) in
-    let witness_keys = list.fold(matching_digests, [], fn(acc, d) {
-      list.concat([acc, qi.lookup_witnesses(idx, d)])
-    }) in
-    let all_witnesses = list.map(witness_keys, fn(k) { rec.getOr(state.witnesses, k, null) }) in
-    let all_witnesses = list.filter(all_witnesses, fn(w) { w != null }) in
-    let rep_state = rec.getOr(state, "reputation", {}) in
-    let cs = cset.assemble(claim_space, subject, matching, []) in
-    let collapse_result = wc.collapse(cs, all_witnesses, rep_state, "single-winner") in
-    let plural_result = wc.collapse(cs, all_witnesses, rep_state, "plural") in
-    let winner_envelope = if collapse_result.winner_digest_hex != null then
-      rec.get(state.claims, collapse_result.winner_digest_hex)
-    else null in
-    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
-      ok: true,
-      claim_space: claim_space,
-      subject: subject,
-      claim_count: list.len(matching),
-      single_winner: {
-        winner_digest_hex: collapse_result.winner_digest_hex,
-        winner_score: collapse_result.winner_score,
-        winner_value: if winner_envelope != null then winner_envelope.claim.object else null
-      },
-      plural: {
-        retained_digests: plural_result.retained_digests,
-        scores: plural_result.scores
-      },
-      provenance: list.map(matching, fn(env) {
-        {
-          digest_hex: env.digest_hex,
-          issuer_node_id: env.claim.issuer_node_id,
-          value: env.claim.object,
-          evidence_refs: env.claim.evidence_refs,
-          timestamp_unix_secs: env.claim.timestamp_unix_secs
-        }
-      })
-    })
+  
   else
     error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "unknown route")
 }
