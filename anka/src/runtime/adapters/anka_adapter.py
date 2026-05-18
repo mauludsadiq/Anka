@@ -4,6 +4,7 @@ import argparse
 import re
 import urllib.request
 import os
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
@@ -389,11 +390,95 @@ class WorldBankBackend:
 SHOPIFY_STORE = os.environ.get("SHOPIFY_STORE", "anka-test-store.myshopify.com")
 SHOPIFY_TOKEN = os.environ.get("SHOPIFY_TOKEN", "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")
 SHOPIFY = ShopifyBackend(SHOPIFY_STORE, SHOPIFY_TOKEN) if SHOPIFY_TOKEN else GapBackend()
+
+class PubMedBackend:
+    """
+    PubMed/NCBI E-utilities backend - live biomedical literature.
+    No API key required.
+    """
+    name = "pubmed"
+    capabilities = ["literature_search", "paper_lookup", "abstract_fetch"]
+    BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+    def api_get(self, path):
+        url = self.BASE + path + "&tool=anka-interact&email=anka@collapselogic.com"
+        req = urllib.request.Request(url, headers={"User-Agent": "ANKA/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
+    def search(self, query, max_results=3):
+        import urllib.parse
+        q = urllib.parse.quote(query)
+        data = self.api_get("/esearch.fcgi?db=pubmed&term=" + q + "&retmax=" + str(max_results) + "&retmode=json")
+        return data["esearchresult"]["idlist"], data["esearchresult"]["count"]
+
+    def fetch_summary(self, pmid):
+        data = self.api_get("/esummary.fcgi?db=pubmed&id=" + pmid + "&retmode=json")
+        rec = data["result"][pmid]
+        authors = [a["name"] for a in rec.get("authors", [])[:3]]
+        if len(rec.get("authors", [])) > 3:
+            authors.append("et al.")
+        return {
+            "pmid": pmid,
+            "title": rec.get("title", ""),
+            "authors": authors,
+            "journal": rec.get("source", ""),
+            "pubdate": rec.get("pubdate", ""),
+            "doi": next((i["value"] for i in rec.get("articleids", []) if i["idtype"] == "doi"), None),
+            "url": "https://pubmed.ncbi.nlm.nih.gov/" + pmid + "/",
+            "source": "PubMed (NCBI E-utilities)"
+        }
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        pmid = str(context.get("pmid") or context.get("pubmed_id") or "")
+        if pmid and pmid != "None":
+            try:
+                paper = self.fetch_summary(pmid)
+                return anka_response(session_id, "paper_returned", paper,
+                    paper["title"][:80] + " — " + ", ".join(paper["authors"]) + " (" + paper["pubdate"] + ")")
+            except Exception as e:
+                return anka_reject(session_id, "paper_fetch_failed", str(e),
+                    "Could not fetch PMID " + str(pmid) + " from PubMed.")
+
+        query = intent
+        for prefix in ["search for papers on ", "find papers on ", "find papers about ",
+                        "search for ", "literature on ", "studies on ",
+                        "research on ", "papers on ", "papers about ", "look up "]:
+            if il.startswith(prefix):
+                query = intent[len(prefix):]
+                break
+
+        try:
+            ids, total = self.search(query, max_results=3)
+            if not ids:
+                return anka_reject(session_id, "no_results", "no_papers_found",
+                    "No papers found for: " + query)
+            papers = []
+            for pid in ids:
+                try:
+                    papers.append(self.fetch_summary(pid))
+                except Exception:
+                    pass
+            top = papers[0] if papers else {}
+            msg = ("Found " + str(total) + " papers on '" + query + "'. Top: " +
+                   top.get("title", "")[:60] + " — " +
+                   ", ".join(top.get("authors", [])) + " (" + top.get("pubdate", "") + ")")
+            return anka_response(session_id, "literature_returned", {
+                "query": query, "total_results": total,
+                "papers": papers, "source": "PubMed (NCBI E-utilities)"
+            }, msg)
+        except Exception as e:
+            return anka_reject(session_id, "search_failed", str(e),
+                "PubMed search failed for: " + query)
+
+
 BACKENDS = {
     "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
     "nist": NISTBackend(), "nist.gov": NISTBackend(),
     "world-bank": WorldBankBackend(), "worldbank": WorldBankBackend(), "worldbank.org": WorldBankBackend(),
+    "pubmed": PubMedBackend(), "ncbi": PubMedBackend(),
 }
 
 
