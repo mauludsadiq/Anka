@@ -1,0 +1,112 @@
+{
+  "phase": "6",
+  "label": "phase6_soak",
+  "started_at": 1779066901.501385,
+  "checks": [
+    {
+      "label": "origin online",
+      "ok": true,
+      "detail": "ed25519:39632270ffd1c38e"
+    },
+    {
+      "label": "all 5 nodes online",
+      "ok": true,
+      "detail": "5/5 online"
+    },
+    {
+      "label": "dalil online",
+      "ok": true,
+      "detail": "dalil_server"
+    },
+    {
+      "label": "5 institutions registered",
+      "ok": true,
+      "detail": "count=5"
+    },
+    {
+      "label": "alias gap resolves",
+      "ok": true,
+      "detail": "retail"
+    },
+    {
+      "label": "alias nyu.edu resolves",
+      "ok": true,
+      "detail": "university"
+    },
+    {
+      "label": "alias nist.gov resolves",
+      "ok": true,
+      "detail": "government"
+    },
+    {
+      "label": "5 claims published",
+      "ok": true,
+      "detail": "5 published"
+    },
+    {
+      "label": "health reflects claim count",
+      "ok": true,
+      "detail": "count=5"
+    },
+    {
+      "label": "witnesses recorded",
+      "ok": true,
+      "detail": "count=3"
+    },
+    {
+      "label": "metrics tracks witnesses",
+      "ok": true,
+      "detail": "recorded=6"
+    },
+    {
+      "label": "query returns correct claim",
+      "ok": true,
+      "detail": "claims=1 winner=Global temp +1.52C \u2014 critical"
+    },
+    {
+      "label": "index has multiple spaces",
+      "ok": true,
+      "detail": "spaces=4"
+    },
+    {
+      "label": "index claims count correct",
+      "ok": true,
+      "detail": "indexed=5"
+    },
+    {
+      "label": "gap return session closed",
+      "ok": true,
+      "detail": "events=3"
+    },
+    {
+      "label": "gap return has 3 events",
+      "ok": true,
+      "detail": "actual=3"
+    },
+    {
+      "label": "dalil browse works",
+      "ok": true,
+      "detail": "node_id=ed25519:d4797892a506"
+    },
+    {
+      "label": "dalil read returns finding",
+      "ok": true,
+      "detail": "finding=Global temp +1.52C \u2014 critical"
+    },
+    {
+      "label": "audit endpoint healthy",
+      "ok": true,
+      "detail": "snapshots=0"
+    },
+    {
+      "label": "health fresh after all ops",
+      "ok": true,
+      "detail": "fresh=True"
+    }
+  ],
+  "passed": 20,
+  "failed": 0,
+  "completed_at": 1779066902.408052,
+  "duration_secs": 0.91,
+  "all_passed": true
+}
