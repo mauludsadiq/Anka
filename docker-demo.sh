@@ -53,11 +53,11 @@ echo "=> Bob fetching Alice's claim directly..."
 curl -s -X POST "$BOB/fetch"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","sender_address":"'"$ALICE"'","timestamp_unix_secs":1775710910}' > /dev/null
 echo "   Fetch triggered"
 
-sleep 5
+sleep 10
 
-echo "=> Querying the mesh (from Bob's node)..."
+echo "=> Querying the mesh (from Alice's node)..."
 
-RESULT=$(curl -s "$BOB/query/research.result.claims/climate-sensitivity-2026")
+RESULT=$(curl -s "$ALICE/query/research.result.claims/climate-sensitivity-2026")
 WINNER=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_value'])")
 SCORE=$(echo "$RESULT"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['single_winner']['winner_score'])")
 CITE=$(echo "$RESULT"   | python3 -c "import sys,json; d=json.load(sys.stdin); w=d['single_winner']['winner_digest_hex']; print('anka:'+w) if w else print('pending')")

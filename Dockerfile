@@ -1,6 +1,6 @@
-FROM ubuntu:22.04
+FROM --platform=linux/amd64 ubuntu:22.04
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl python3 && rm -rf /var/lib/apt/lists/*
 
 COPY fardrun /usr/local/bin/fardrun
 RUN chmod +x /usr/local/bin/fardrun

@@ -2,12 +2,13 @@ version: "3.8"
 
 services:
   origin:
+    platform: linux/amd64
     build: .
     command: fardrun run --program anka/src/origin_process.fard --out out/origin
     ports:
       - "18090:18090"
     volumes:
-      - origin_data:/anka/out/origin
+      - origin_data:/app/out/origin
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:18090/health"]
       interval: 3s
@@ -15,12 +16,13 @@ services:
       retries: 10
 
   alice:
+    platform: linux/amd64
     build: .
     command: fardrun run --program anka/src/node_process.fard --out out/node
     ports:
       - "18080:18080"
     volumes:
-      - alice_data:/anka/out/node
+      - alice_data:/app/out/node
     depends_on:
       origin:
         condition: service_healthy
@@ -31,12 +33,13 @@ services:
       retries: 10
 
   bob:
+    platform: linux/amd64
     build: .
     command: fardrun run --program anka/src/node_process_b.fard --out out/node
     ports:
       - "18081:18081"
     volumes:
-      - bob_data:/anka/out/node
+      - bob_data:/app/out/node
     depends_on:
       origin:
         condition: service_healthy
@@ -46,20 +49,22 @@ services:
       timeout: 2s
       retries: 10
 
-  policy:
-    build: .
-    command: fardrun run --program anka/src/policy_process.fard --out out/policy
+  adapter:
+    image: python:3.11-slim
+    command: python3 /app/anka/src/runtime/adapters/anka_adapter.py --institution the-gap --port 19200
     ports:
-      - "18082:18082"
+      - "19200:19200"
     volumes:
-      - policy_data:/anka/out/policy
-    depends_on:
-      origin:
-        condition: service_healthy
+      - ./anka:/app/anka
+    environment:
+      - SHOPIFY_STORE=anka-test-store.myshopify.com
+      - SHOPIFY_TOKEN=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
+    working_dir: /app
 
   demo:
+    platform: linux/amd64
     build: .
-    command: bash /anka/docker-demo.sh
+    command: bash /app/anka/docker-demo.sh
     depends_on:
       alice:
         condition: service_healthy
@@ -74,4 +79,3 @@ volumes:
   origin_data:
   alice_data:
   bob_data:
-  policy_data:
