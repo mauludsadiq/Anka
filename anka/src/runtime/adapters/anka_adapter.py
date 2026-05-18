@@ -382,7 +382,10 @@ class WorldBankBackend:
                formatted + " (" + data["year"] + ", World Bank)")
         return anka_response(session_id, "indicator_returned", data, msg)
 
-SHOPIFY = ShopifyBackend("anka-test-store.myshopify.com", "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")
+import os
+SHOPIFY_STORE = os.environ.get("SHOPIFY_STORE", "anka-test-store.myshopify.com")
+SHOPIFY_TOKEN = os.environ.get("SHOPIFY_TOKEN", "")
+SHOPIFY = ShopifyBackend(SHOPIFY_STORE, SHOPIFY_TOKEN) if SHOPIFY_TOKEN else GapBackend()
 BACKENDS = {
     "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
