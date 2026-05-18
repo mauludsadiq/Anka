@@ -1,0 +1,19 @@
+import("institution_registry") as ir
+import("std/str") as str
+
+fn route(registry, name, path) {
+  let inst = ir.resolve(registry, name) in
+  if inst == null then
+    { ok: false, reason: "institution not found", name: name }
+  else
+    {
+      ok: true,
+      name: inst.name,
+      address: inst.address,
+      node_id: inst.node_id,
+      path: path,
+      url: str.concat([inst.address, path])
+    }
+}
+
+export { route }

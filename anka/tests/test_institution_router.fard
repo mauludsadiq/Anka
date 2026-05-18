@@ -1,0 +1,23 @@
+import("../src/runtime/institution_registry") as ir
+import("../src/runtime/institution_router") as router
+
+test "route resolves institution path" {
+  let r = ir.empty_registry() in
+  let r = ir.register(r, "the-gap", "http://localhost:18100", "ed25519:gap", "retail") in
+  let route = router.route(r, "the-gap", "/interact") in
+  route.ok && route.url == "http://localhost:18100/interact"
+}
+
+test "route resolves alias" {
+  let r = ir.empty_registry() in
+  let r = ir.register(r, "the-gap", "http://localhost:18100", "ed25519:gap", "retail") in
+  let r = ir.add_alias(r, "gap", "the-gap") in
+  let route = router.route(r, "gap", "/health") in
+  route.ok && route.node_id == "ed25519:gap"
+}
+
+test "route unknown institution fails" {
+  let r = ir.empty_registry() in
+  let route = router.route(r, "unknown", "/health") in
+  route.ok == false && route.reason == "institution not found"
+}
