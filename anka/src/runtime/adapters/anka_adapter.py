@@ -149,10 +149,123 @@ class NISTBackend:
             "speed of light, elementary charge, and more.")
 
 
+
+class WorldBankBackend:
+    """
+    World Bank API backend — live economic indicators.
+    No API key required.
+    https://datahelpdesk.worldbank.org/knowledgebase/articles/889392
+    """
+    name = "world-bank"
+    capabilities = ["gdp_query", "economic_indicator", "country_data", "poverty_data"]
+    BASE = "https://api.worldbank.org/v2"
+
+    INDICATORS = {
+        "gdp":               ("NY.GDP.MKTP.CD", "GDP (current US$)"),
+        "gdp per capita":    ("NY.GDP.PCAP.CD", "GDP per capita (current US$)"),
+        "population":        ("SP.POP.TOTL",    "Population total"),
+        "inflation":         ("FP.CPI.TOTL.ZG", "Inflation, consumer prices (annual %)"),
+        "unemployment":      ("SL.UEM.TOTL.ZS", "Unemployment, total (% of labor force)"),
+        "poverty":           ("SI.POV.DDAY",    "Poverty headcount ratio at $2.15/day (%)"),
+        "life expectancy":   ("SP.DYN.LE00.IN", "Life expectancy at birth (years)"),
+        "co2":               ("EN.ATM.CO2E.PC", "CO2 emissions (metric tons per capita)"),
+        "trade":             ("NE.TRD.GNFS.ZS", "Trade (% of GDP)"),
+        "debt":              ("GC.DOD.TOTL.GD.ZS", "Central government debt (% of GDP)"),
+    }
+
+    COUNTRY_CODES = {
+        "united states": "US", "usa": "US", "us": "US", "america": "US",
+        "china": "CN", "uk": "GB", "united kingdom": "GB", "britain": "GB",
+        "germany": "DE", "france": "FR", "japan": "JP", "india": "IN",
+        "brazil": "BR", "canada": "CA", "australia": "AU", "russia": "RU",
+        "south korea": "KR", "korea": "KR", "mexico": "MX", "italy": "IT",
+        "spain": "ES", "indonesia": "ID", "turkey": "TR", "saudi arabia": "SA",
+        "netherlands": "NL", "switzerland": "CH", "argentina": "AR", "nigeria": "NG",
+        "world": "WLD", "global": "WLD",
+    }
+
+    def fetch_indicator(self, country_code, indicator_code, mrv=1):
+        try:
+            url = (self.BASE + "/country/" + country_code +
+                   "/indicator/" + indicator_code +
+                   "?format=json&mrv=" + str(mrv))
+            req = urllib.request.Request(url,
+                headers={"User-Agent": "ANKA/1.0 (anka-interact-protocol)"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            if len(data) >= 2 and data[1] and len(data[1]) > 0:
+                rec = data[1][0]
+                return {
+                    "country": rec["country"]["value"],
+                    "country_code": rec["countryiso3code"],
+                    "indicator_id": indicator_code,
+                    "indicator_name": rec["indicator"]["value"],
+                    "value": rec["value"],
+                    "year": rec["date"],
+                    "source": "World Bank Open Data",
+                    "last_updated": data[0].get("lastupdated", ""),
+                    "reference_url": "https://data.worldbank.org"
+                }
+        except Exception:
+            return None
+        return None
+
+    def detect_country(self, intent_lower, context):
+        if context.get("country"):
+            c = context["country"].lower()
+            return self.COUNTRY_CODES.get(c, c.upper()[:2])
+        for name, code in self.COUNTRY_CODES.items():
+            if name in intent_lower:
+                return code
+        return "WLD"
+
+    def detect_indicator(self, intent_lower):
+        for keyword, (code, name) in self.INDICATORS.items():
+            if keyword in intent_lower:
+                return code, name
+        return None, None
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        country_code = self.detect_country(il, context)
+        indicator_code, indicator_name = self.detect_indicator(il)
+
+        if not indicator_code:
+            return anka_clarify(session_id, "indicator_not_understood",
+                "I can provide GDP, population, inflation, unemployment, poverty rate, "
+                "life expectancy, CO2 emissions, trade, and debt for any country. "
+                "Try: GDP of Germany, or China population.")
+
+        data = self.fetch_indicator(country_code, indicator_code)
+        if not data:
+            return anka_reject(session_id, "data_fetch_failed", "worldbank_unavailable",
+                "Could not fetch " + indicator_name + " for " + country_code +
+                " from World Bank. Try again shortly.")
+
+        value = data["value"]
+        if value is None:
+            return anka_reject(session_id, "no_data", "no_data_available",
+                "No data available for " + indicator_name + " in " + data["country"] + ".")
+
+        # Format value
+        if abs(value) >= 1e12:
+            formatted = "$" + str(round(value/1e12, 2)) + " trillion"
+        elif abs(value) >= 1e9:
+            formatted = "$" + str(round(value/1e9, 2)) + " billion"
+        elif abs(value) >= 1e6:
+            formatted = "$" + str(round(value/1e6, 2)) + " million"
+        else:
+            formatted = str(round(value, 2))
+
+        msg = (data["country"] + " " + indicator_name + ": " +
+               formatted + " (" + data["year"] + ", World Bank)")
+        return anka_response(session_id, "indicator_returned", data, msg)
+
 BACKENDS = {
     "the-gap": GapBackend(), "gap": GapBackend(),
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
     "nist": NISTBackend(), "nist.gov": NISTBackend(),
+    "world-bank": WorldBankBackend(), "worldbank": WorldBankBackend(), "worldbank.org": WorldBankBackend(),
 }
 
 
