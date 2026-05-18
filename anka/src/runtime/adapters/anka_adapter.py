@@ -568,6 +568,164 @@ class ArXivBackend:
                 "arXiv search failed for: " + query)
 
 
+
+class CityPDBackend:
+    """City Police Department — incident report filing and retrieval."""
+    name = "city-pd"
+    capabilities = ["police_report", "incident_lookup", "report_status"]
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        incident_id = context.get("incident_id", "INC-UNKNOWN")
+
+        if "file" in il or "report" in il or "accident" in il:
+            import hashlib, time
+            report_number = "RPT-" + hashlib.sha256((incident_id + str(time.time())).encode()).hexdigest()[:8].upper()
+            date = context.get("date", "2026-05-17")
+            location = context.get("location", "Unknown location")
+            description = context.get("description", "Vehicle accident")
+            injuries = context.get("injuries", "none reported")
+            return anka_response(session_id, "report_filed", {
+                "report_number": report_number,
+                "incident_id": incident_id,
+                "date": date,
+                "location": location,
+                "description": description,
+                "injuries": injuries,
+                "status": "filed",
+                "officer": "Officer M. Rodriguez, Badge #4471",
+                "filing_date": "2026-05-18",
+                "source": "City Police Department (mock)"
+            }, "Police report " + report_number + " filed for incident at " +
+               location + " on " + date + ". Officer Rodriguez assigned.")
+
+        elif "status" in il or "lookup" in il:
+            report_number = context.get("report_number", "unknown")
+            return anka_response(session_id, "report_status_returned", {
+                "report_number": report_number,
+                "status": "filed",
+                "available_for_insurance": True,
+                "source": "City Police Department (mock)"
+            }, "Report " + report_number + " is filed and available for insurance submission.")
+
+        return anka_clarify(session_id, "intent_not_understood",
+            "I can help file a police report or check report status.")
+
+
+class StateFarmBackend:
+    """State Farm Insurance — claim filing, assessment, approval."""
+    name = "state-farm"
+    capabilities = ["claim_filing", "claim_status", "payout_estimate"]
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        incident_id = context.get("incident_id", "INC-UNKNOWN")
+        policy_number = context.get("policy_number", "SF-000000")
+
+        if "file" in il or "claim" in il or "accident" in il:
+            import hashlib, time
+            claim_id = "CLM-" + hashlib.sha256((incident_id + policy_number).encode()).hexdigest()[:8].upper()
+            at_fault = context.get("at_fault", "unknown")
+            damage = context.get("damage_description", "Vehicle damage")
+            police_report = context.get("police_report", "")
+
+            # Estimate payout based on damage description
+            payout = "2847.00"
+            if "total" in damage.lower():
+                payout = "18500.00"
+            elif "door" in damage.lower() or "fender" in damage.lower():
+                payout = "2847.00"
+            elif "windshield" in damage.lower():
+                payout = "450.00"
+
+            return anka_response(session_id, "claim_approved", {
+                "claim_id": claim_id,
+                "incident_id": incident_id,
+                "policy_number": policy_number,
+                "police_report": police_report,
+                "at_fault": at_fault,
+                "damage_description": damage,
+                "estimated_payout": payout,
+                "currency": "USD",
+                "adjuster": "Sarah Chen, Adjuster #SF-2291",
+                "status": "approved",
+                "deductible": "500.00",
+                "net_payout": str(round(float(payout) - 500, 2)),
+                "expected_processing_days": 3,
+                "source": "State Farm Insurance (mock)"
+            }, "Claim " + claim_id + " approved. Estimated payout $" + payout +
+               " (net $" + str(round(float(payout) - 500, 2)) + " after deductible). " +
+               "Adjuster Sarah Chen will contact you within 24 hours.")
+
+        elif "status" in il:
+            claim_id = context.get("claim_id", "unknown")
+            return anka_response(session_id, "claim_status_returned", {
+                "claim_id": claim_id, "status": "approved",
+                "source": "State Farm Insurance (mock)"
+            }, "Claim " + claim_id + " is approved and processing.")
+
+        return anka_clarify(session_id, "intent_not_understood",
+            "I can help file an insurance claim or check claim status.")
+
+
+class CityAutoRepairBackend:
+    """City Auto Repair — appointment booking, estimates."""
+    name = "city-auto"
+    capabilities = ["repair_booking", "estimate_request", "appointment_status"]
+
+    SLOTS = [
+        ("2026-05-21", "Thursday", "10:00 AM"),
+        ("2026-05-22", "Friday",   "2:00 PM"),
+        ("2026-05-23", "Saturday", "9:00 AM"),
+    ]
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        claim_id = context.get("claim_id", "")
+        vehicle = context.get("vehicle", "your vehicle")
+        damage = context.get("damage", "vehicle damage")
+
+        if "book" in il or "appointment" in il or "repair" in il or "schedule" in il:
+            import hashlib, time
+            slot = self.SLOTS[0]
+            appt_id = "APPT-" + hashlib.sha256((claim_id + slot[0]).encode()).hexdigest()[:8].upper()
+
+            # Estimate based on damage
+            estimate = "2350.00"
+            if "door" in damage.lower() and "fender" in damage.lower():
+                estimate = "2350.00"
+            elif "door" in damage.lower():
+                estimate = "1200.00"
+            elif "fender" in damage.lower():
+                estimate = "850.00"
+            elif "windshield" in damage.lower():
+                estimate = "380.00"
+
+            insurance_approved = context.get("insurance_approved", False)
+            return anka_response(session_id, "appointment_booked", {
+                "appointment_id": appt_id,
+                "appointment_date": slot[0],
+                "appointment_day": slot[1],
+                "appointment_time": slot[2],
+                "vehicle": vehicle,
+                "damage": damage,
+                "repair_estimate": estimate,
+                "currency": "USD",
+                "insurance_claim": claim_id,
+                "insurance_billing": insurance_approved,
+                "technician": "Mike Torres, Senior Technician",
+                "estimated_completion_days": 3,
+                "loaner_available": True,
+                "source": "City Auto Repair (mock)"
+            }, "Repair appointment booked for " + slot[1] + " " + slot[0] +
+               " at " + slot[2] + ". Estimate: $" + estimate + ". " +
+               ("Insurance will be billed directly. " if insurance_approved else "") +
+               "Loaner car available. Technician: Mike Torres.")
+
+        return anka_clarify(session_id, "intent_not_understood",
+            "I can book a repair appointment or provide an estimate.")
+
+
 BACKENDS = {
     "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
@@ -575,6 +733,9 @@ BACKENDS = {
     "world-bank": WorldBankBackend(), "worldbank": WorldBankBackend(), "worldbank.org": WorldBankBackend(),
     "pubmed": PubMedBackend(), "ncbi": PubMedBackend(),
     "arxiv": ArXivBackend(), "arxiv.org": ArXivBackend(),
+    "city-pd": CityPDBackend(), "citypd": CityPDBackend(),
+    "state-farm": StateFarmBackend(), "statefarm": StateFarmBackend(),
+    "city-auto": CityAutoRepairBackend(), "cityauto": CityAutoRepairBackend(),
 }
 
 
