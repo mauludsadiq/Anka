@@ -1,0 +1,13 @@
+{
+  "session_id": "test-sess-001",
+  "actor_id": "anka-test-agent",
+  "institution": "your-institution",
+  "intent": "I need to return my order",
+  "capability": "retail_return",
+  "context": {
+    "order_id": "ORDER-TEST-001",
+    "item_id": "ITEM-001",
+    "price_cents": 4999
+  },
+  "timestamp_unix_secs": 1775900000
+}
