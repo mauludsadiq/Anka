@@ -1,0 +1,67 @@
+import("std/str") as str
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// NYU Mock Agent
+// Implements the ANKA interact protocol for student services.
+
+fn handle_interact(request) {
+  let intent = rec.getOr(request, "intent", "") in
+  let context = rec.getOr(request, "context", {}) in
+  let session_id = rec.getOr(request, "session_id", "") in
+  let capability = rec.getOr(request, "capability", "") in
+  let student_id = rec.getOr(context, "student_id", "") in
+
+  if student_id == "" then
+    {
+      ok: false,
+      session_id: session_id,
+      action: "identity_required",
+      result: {},
+      message: "Please provide your NYU NetID or student ID to continue.",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":no_identity"])),
+      done: false
+    }
+  else if str.contains(intent, "transcript") then
+    let recipient = rec.getOr(context, "recipient", "self") in
+    let doc_id = str.concat(["NYU-TR-2026-", str.slice(student_id, 0, 8)]) in
+    {
+      ok: true,
+      session_id: session_id,
+      action: "transcript_issued",
+      result: {
+        student_id: student_id,
+        document_id: doc_id,
+        recipient: recipient,
+        format: "official_pdf",
+        issued_at: "2026-05-17",
+        delivery: "secure_electronic"
+      },
+      message: str.concat(["Official transcript ", doc_id, " has been issued and sent to ", recipient, "."]),
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":", doc_id])),
+      done: true
+    }
+  else if str.contains(intent, "enrollment") || str.contains(intent, "verification") then
+    {
+      ok: true,
+      session_id: session_id,
+      action: "enrollment_verified",
+      result: { student_id: student_id, status: "enrolled", program: "Computer Science MS", expected_graduation: "May 2027" },
+      message: str.concat(["Student ", student_id, " is currently enrolled in Computer Science MS, expected graduation May 2027."]),
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":enrollment"])),
+      done: true
+    }
+  else
+    {
+      ok: false,
+      session_id: session_id,
+      action: "intent_not_understood",
+      result: {},
+      message: "I can help with transcripts, enrollment verification, and student records. What do you need?",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":unrecognized"])),
+      done: false
+    }
+}
+
+export { handle_interact }

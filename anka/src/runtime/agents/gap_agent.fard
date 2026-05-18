@@ -1,0 +1,72 @@
+import("std/str") as str
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// Gap Mock Agent
+// Implements the ANKA interact protocol for retail returns.
+// In production this would be Gap's real AI — here it's deterministic mock logic.
+
+fn handle_interact(request) {
+  let intent = rec.getOr(request, "intent", "") in
+  let context = rec.getOr(request, "context", {}) in
+  let session_id = rec.getOr(request, "session_id", "") in
+  let capability = rec.getOr(request, "capability", "") in
+
+  if str.contains(intent, "return") || str.contains(intent, "refund") then
+    let order_id = rec.getOr(context, "order_id", "UNKNOWN") in
+    let item_id = rec.getOr(context, "item_id", "UNKNOWN") in
+    let order_valid = order_id != "UNKNOWN" && str.starts_with(order_id, "ORDER-") in
+    if !order_valid then
+      {
+        ok: false,
+        session_id: session_id,
+        action: "return_rejected",
+        result: { reason: "invalid order id" },
+        message: str.concat(["Sorry, I couldn't find order ", order_id, ". Please check your order number."]),
+        receipt_hint: hash.sha256_text(str.concat([session_id, ":rejected"])),
+        done: true
+      }
+    else
+      let refund_cents = rec.getOr(context, "price_cents", 4999) in
+      let label_id = str.concat(["LABEL-UPS-", str.slice(order_id, 6, str.len(order_id))]) in
+      {
+        ok: true,
+        session_id: session_id,
+        action: "return_authorized",
+        result: {
+          order_id: order_id,
+          item_id: item_id,
+          return_label_id: label_id,
+          refund_amount_cents: refund_cents,
+          refund_method: "original_payment",
+          estimated_refund_days: 3
+        },
+        message: str.concat(["Return approved for ", order_id, ". Your return label is ", label_id, ". Refund of $", str.from(refund_cents / 100), " will appear in 3-5 days."]),
+        receipt_hint: hash.sha256_text(str.concat([session_id, ":", label_id])),
+        done: true
+      }
+  else if str.contains(intent, "order") || str.contains(intent, "status") then
+    let order_id = rec.getOr(context, "order_id", "UNKNOWN") in
+    {
+      ok: true,
+      session_id: session_id,
+      action: "order_status_returned",
+      result: { order_id: order_id, status: "delivered", delivered_on: "2026-04-10" },
+      message: str.concat(["Order ", order_id, " was delivered on April 10, 2026."]),
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":status"])),
+      done: true
+    }
+  else
+    {
+      ok: false,
+      session_id: session_id,
+      action: "intent_not_understood",
+      result: {},
+      message: "I can help you with returns, refunds, and order status. What would you like to do?",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":unrecognized"])),
+      done: false
+    }
+}
+
+export { handle_interact }

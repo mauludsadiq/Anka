@@ -29,6 +29,7 @@ import("query_index") as qi
 import("runtime/institution_registry") as ir
 import("runtime/institution_router") as irt
 import("runtime/institution_session") as sess
+import("std/process") as proc_rt
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -47,6 +48,7 @@ import("query_index") as qi
 import("runtime/institution_registry") as ir
 import("runtime/institution_router") as irt
 import("runtime/institution_session") as sess
+import("std/process") as proc_rt
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -626,6 +628,56 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
     let next_state = rec.set(state, "session_store", next_store) in
     let s = sess.get_session(next_store, session_id) in
     json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, session_id: session_id, status: if s != null then s.status else "unknown", event_count: if s != null then list.len(s.events) else 0 })
+  else if req.path == "/runtime/interact" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let institution_name = rec.getOr(body, "institution", "") in
+    let session_id = rec.getOr(body, "session_id", str.concat(["auto-", state.node_id])) in
+    let intent = rec.getOr(body, "intent", "") in
+    let context = rec.getOr(body, "context", {}) in
+    let capability = rec.getOr(body, "capability", "default") in
+    let reg = rec.getOr(state, "institution_registry", ir.empty_registry()) in
+    let inst = ir.resolve(reg, institution_name) in
+    if inst == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, str.concat(["institution not found: ", institution_name]))
+    else
+      let interact_url = str.concat([inst.address, "/interact"]) in
+      let interact_body = json.encode({
+        session_id: session_id,
+        actor_id: rec.getOr(body, "actor_id", "anka-user"),
+        institution: institution_name,
+        intent: intent,
+        capability: capability,
+        context: context,
+        timestamp_unix_secs: now
+      }) in
+      let captured = proc_rt.capture("curl", ["-s", "-m", "10", "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-d", interact_body, interact_url]) in
+      if !captured.ok || str.len(captured.stdout) == 0 then
+        error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 502, str.concat(["agent unreachable: ", inst.address]))
+      else
+        let agent_response = json.decode(captured.stdout) in
+        let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
+        let store2 = if sess.get_session(store, session_id) == null then
+          sess.start_session(store, session_id, institution_name, rec.getOr(body, "actor_id", "anka-user"), intent, now)
+        else store in
+        let store3 = sess.add_event(store2, session_id, agent_response.action,
+          { intent: intent, result: agent_response.result, message: agent_response.message }, now) in
+        let store4 = if agent_response.done then
+          sess.close_session(store3, session_id, now)
+        else store3 in
+        let next_state = rec.set(state, "session_store", store4) in
+        json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, {
+          ok: agent_response.ok,
+          session_id: session_id,
+          institution: institution_name,
+          action: agent_response.action,
+          result: agent_response.result,
+          message: agent_response.message,
+          receipt_hint: agent_response.receipt_hint,
+          done: agent_response.done,
+          session_status: if agent_response.done then "closed" else "open"
+        })
   else if req.path == "/runtime/sessions" && req.method == "GET" then
     let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
     let all_ids = rec.keys(store.sessions) in

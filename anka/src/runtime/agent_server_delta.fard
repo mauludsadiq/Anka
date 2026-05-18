@@ -1,0 +1,56 @@
+import("std/net") as net
+import("std/json") as json
+import("std/str") as str
+import("std/rec") as rec
+import("std/sqlite") as sqlite
+import("agents/gap_agent") as gap
+import("agents/nyu_agent") as nyu
+import("agents/nist_agent") as nist
+
+// ANKA Mock Institution Agent Server
+// Runs as a standalone HTTP server simulating an institution's AI endpoint.
+// Speaks the ANKA interact protocol.
+// In production: replaced by the institution's real AI.
+//
+// Protocol: POST /interact -> { ok, action, result, message, receipt_hint, done }
+// Protocol: GET  /health   -> { ok, kind, institution }
+// Protocol: GET  /manifest -> { ok, institution, capabilities, interact_url }
+
+let port = 19104
+let institution = "delta"
+let agent_kind = "airline"
+
+let _ = net.serve(port, fn(req) {
+  if req.path == "/health" && req.method == "GET" then
+    { status: 200, body: json.encode({ ok: true, kind: "anka_agent", institution: institution, port: port }), "content-type": "application/json" }
+
+  else if req.path == "/manifest" && req.method == "GET" then
+    { status: 200, body: json.encode({
+        ok: true,
+        institution: institution,
+        agent_kind: agent_kind,
+        protocol_version: "1.0",
+        interact_url: str.concat(["http://localhost:", str.from(port), "/interact"]),
+        capabilities: ["retail_return", "order_status", "refund_inquiry"],
+        auth: "none"
+      }), "content-type": "application/json" }
+
+  else if req.path == "/interact" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let inst = rec.getOr(body, "institution", institution) in
+    let response = if inst == "the-gap" || inst == "gap" then
+      gap.handle_interact(body)
+    else if inst == "nyu" || inst == "nyu.edu" then
+      nyu.handle_interact(body)
+    else if inst == "nist" || inst == "nist.gov" then
+      nist.handle_interact(body)
+    else
+      { ok: false, session_id: rec.getOr(body, "session_id", ""), action: "unknown_institution",
+        result: {}, message: str.concat(["No agent registered for: ", inst]),
+        receipt_hint: "", done: true }
+    in
+    { status: 200, body: json.encode(response), "content-type": "application/json" }
+
+  else
+    { status: 404, body: json.encode({ ok: false, reason: "unknown route" }), "content-type": "application/json" }
+})

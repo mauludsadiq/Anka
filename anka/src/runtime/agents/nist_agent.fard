@@ -1,0 +1,72 @@
+import("std/str") as str
+import("std/rec") as rec
+import("std/json") as json
+import("std/hash") as hash
+
+// NIST Mock Agent
+// Implements the ANKA interact protocol for scientific data access.
+
+fn handle_interact(request) {
+  let intent = rec.getOr(request, "intent", "") in
+  let context = rec.getOr(request, "context", {}) in
+  let session_id = rec.getOr(request, "session_id", "") in
+
+  if str.contains(intent, "planck") || str.contains(intent, "constant") then
+    {
+      ok: true,
+      session_id: session_id,
+      action: "constant_returned",
+      result: {
+        name: "Planck constant",
+        symbol: "h",
+        value: "6.62607015e-34",
+        unit: "J Hz^-1",
+        uncertainty: "exact",
+        codata_year: 2018,
+        source: "CODATA 2018 recommended values"
+      },
+      message: "Planck constant h = 6.62607015e-34 J Hz^-1 (exact, CODATA 2018).",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":planck"])),
+      done: true
+    }
+  else if str.contains(intent, "speed") || str.contains(intent, "light") then
+    {
+      ok: true,
+      session_id: session_id,
+      action: "constant_returned",
+      result: {
+        name: "speed of light in vacuum",
+        symbol: "c",
+        value: "299792458",
+        unit: "m s^-1",
+        uncertainty: "exact",
+        codata_year: 2018
+      },
+      message: "Speed of light c = 299792458 m s^-1 (exact).",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":c"])),
+      done: true
+    }
+  else if str.contains(intent, "dataset") || str.contains(intent, "data") then
+    let dataset = rec.getOr(context, "dataset_id", "unknown") in
+    {
+      ok: true,
+      session_id: session_id,
+      action: "dataset_reference_returned",
+      result: { dataset_id: dataset, url: str.concat(["https://data.nist.gov/od/id/", dataset]), format: "JSON-LD", license: "public_domain" },
+      message: str.concat(["Dataset ", dataset, " is available at data.nist.gov under public domain license."]),
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":dataset:", dataset])),
+      done: true
+    }
+  else
+    {
+      ok: false,
+      session_id: session_id,
+      action: "intent_not_understood",
+      result: {},
+      message: "I can provide physical constants, measurement standards, and dataset references. What are you looking for?",
+      receipt_hint: hash.sha256_text(str.concat([session_id, ":unrecognized"])),
+      done: false
+    }
+}
+
+export { handle_interact }
