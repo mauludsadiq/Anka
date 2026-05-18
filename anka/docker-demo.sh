@@ -136,8 +136,13 @@ echo ""
 echo "=> PubMed: biomedical literature (live from pubmed.ncbi.nlm.nih.gov)..."
 PUBMED_RESP=$(curl -s -X POST "$ADAPTER/interact" \
   -H "Content-Type: application/json" \
-  -d "{\"session_id\":\"demo-pubmed-1\",\"actor_id\":\"demo\",\"institution\":\"pubmed\",\"intent\":\"Find papers on mRNA vaccine efficacy\",\"capability\":\"literature_search\",\"context\":{},\"timestamp_unix_secs\":1775900000}")
+  -d '{"session_id":"demo-pubmed-1","actor_id":"demo","institution":"pubmed","intent":"Find papers on mRNA vaccine efficacy","capability":"literature_search","context":{},"timestamp_unix_secs":1775900000}')
 echo "$PUBMED_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ' + d.get('message','error')[:80])"
+
+echo ""
+echo "=> arXiv: preprints (live from export.arxiv.org)..."
+ARXIV_RESP=$(curl -s -X POST "$ADAPTER/interact" -H "Content-Type: application/json" -d '{"session_id":"demo-arxiv-1","actor_id":"demo","institution":"arxiv","intent":"Find preprints on large language models","capability":"preprint_search","context":{},"timestamp_unix_secs":1775900000}')
+echo "$ARXIV_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ' + d.get('message','error')[:80])"
 
 echo ""
 echo "=== Live integrations complete ==="
