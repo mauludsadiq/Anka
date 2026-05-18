@@ -53,7 +53,18 @@ echo "=> Bob fetching Alice's claim directly..."
 curl -s -X POST "$BOB/fetch"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","sender_address":"'"$ALICE"'","timestamp_unix_secs":1775710910}' > /dev/null
 echo "   Fetch triggered"
 
-sleep 10
+sleep 3
+
+echo "=> Bob witnesses Alice claim..."
+curl -s -X POST "$BOB/witness"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","witness_node_id":"bob-replication-agent","validation_type":"independent_replication","timestamp_unix_secs":1775711000}' > /dev/null
+echo "   Bob witnessed"
+
+echo "=> Pushing Bob witness back to Alice..."
+curl -s -X POST "$ALICE/fetch"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","sender_address":"'"$BOB"'","timestamp_unix_secs":1775711010}' > /dev/null
+curl -s -X POST "$ALICE/witness"   -H "Content-Type: application/json"   --data '{"digest_hex":"'"$ALICE_DIGEST"'","witness_node_id":"bob-replication-agent","validation_type":"independent_replication","timestamp_unix_secs":1775711000}' > /dev/null
+echo "   Witness synced to Alice"
+
+sleep 3
 
 echo "=> Querying the mesh (from Alice's node)..."
 
