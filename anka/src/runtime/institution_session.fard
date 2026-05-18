@@ -1,0 +1,46 @@
+import("std/rec") as rec
+import("std/list") as list
+
+fn empty_session_store() {
+  { sessions: {} }
+}
+
+fn start_session(store, session_id, institution_name, actor_id, purpose, timestamp_unix_secs) {
+  let session = {
+    session_id: session_id,
+    institution_name: institution_name,
+    actor_id: actor_id,
+    purpose: purpose,
+    status: "open",
+    started_at: timestamp_unix_secs,
+    events: []
+  } in
+  { sessions: rec.set(store.sessions, session_id, session) }
+}
+
+fn add_event(store, session_id, event_kind, event_data, timestamp_unix_secs) {
+  let s = rec.getOr(store.sessions, session_id, null) in
+  if s == null then store
+  else
+    let ev = { event_kind: event_kind, event_data: event_data, timestamp_unix_secs: timestamp_unix_secs } in
+    let next = { ...s, events: list.append(s.events, ev) } in
+    { sessions: rec.set(store.sessions, session_id, next) }
+}
+
+fn close_session(store, session_id, timestamp_unix_secs) {
+  let s = rec.getOr(store.sessions, session_id, null) in
+  if s == null then store
+  else
+    let next = { ...s, status: "closed", closed_at: timestamp_unix_secs } in
+    { sessions: rec.set(store.sessions, session_id, next) }
+}
+
+fn get_session(store, session_id) {
+  rec.getOr(store.sessions, session_id, null)
+}
+
+fn session_count(store) {
+  list.len(rec.keys(store.sessions))
+}
+
+export { empty_session_store, start_session, add_event, close_session, get_session, session_count }

@@ -1,0 +1,30 @@
+import("../src/runtime/institution_session") as sess
+import("std/list") as list
+
+test "empty session store has zero sessions" {
+  let s = sess.empty_session_store() in
+  sess.session_count(s) == 0
+}
+
+test "start session creates open session" {
+  let s = sess.empty_session_store() in
+  let s = sess.start_session(s, "sess-1", "the-gap", "user-1", "return jeans", 1775710900) in
+  let x = sess.get_session(s, "sess-1") in
+  sess.session_count(s) == 1 && x.status == "open" && x.institution_name == "the-gap"
+}
+
+test "add event appends to session" {
+  let s = sess.empty_session_store() in
+  let s = sess.start_session(s, "sess-1", "the-gap", "user-1", "return jeans", 1775710900) in
+  let s = sess.add_event(s, "sess-1", "intent", { text: "I need to return jeans" }, 1775710901) in
+  let x = sess.get_session(s, "sess-1") in
+  list.len(x.events) == 1 && x.events[0].event_kind == "intent"
+}
+
+test "close session marks closed" {
+  let s = sess.empty_session_store() in
+  let s = sess.start_session(s, "sess-1", "the-gap", "user-1", "return jeans", 1775710900) in
+  let s = sess.close_session(s, "sess-1", 1775710910) in
+  let x = sess.get_session(s, "sess-1") in
+  x.status == "closed" && x.closed_at == 1775710910
+}
