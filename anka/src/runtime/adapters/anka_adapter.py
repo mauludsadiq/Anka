@@ -613,9 +613,42 @@ class CityPDBackend:
 
 
 class StateFarmBackend:
-    """State Farm Insurance — claim filing, assessment, approval."""
+    """
+    State Farm Insurance — claim filing with live World Bank CPI adjustment.
+    Base repair costs are adjusted using real US inflation data from World Bank.
+    """
     name = "state-farm"
     capabilities = ["claim_filing", "claim_status", "payout_estimate"]
+    WB_BASE = "https://api.worldbank.org/v2"
+
+    # Base repair costs in 2020 USD (pre-inflation baseline)
+    BASE_COSTS = {
+        "door_fender": 2200.00,
+        "total_loss":  15000.00,
+        "windshield":   350.00,
+        "rear":        1800.00,
+        "default":     2200.00,
+    }
+
+    def fetch_inflation_adjustment(self):
+        """Fetch US CPI inflation from World Bank to adjust 2020 base costs."""
+        try:
+            url = self.WB_BASE + "/country/US/indicator/FP.CPI.TOTL.ZG?format=json&mrv=3"
+            req = urllib.request.Request(url,
+                headers={"User-Agent": "ANKA/1.0 (anka-interact-protocol)"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            records = data[1] if len(data) > 1 else []
+            # Sum last 3 years of inflation to get cumulative adjustment
+            total_inflation = sum(
+                r["value"] for r in records if r.get("value") is not None
+            )
+            adjustment_factor = 1 + (total_inflation / 100)
+            latest_year = records[0]["date"] if records else "2024"
+            latest_cpi = records[0]["value"] if records else None
+            return adjustment_factor, latest_year, latest_cpi, "World Bank (FP.CPI.TOTL.ZG)"
+        except Exception:
+            return 1.15, "2024", 3.4, "fallback (World Bank unavailable)"
 
     def handle_intent(self, intent, context, session_id, capability):
         il = intent.lower()
@@ -629,14 +662,28 @@ class StateFarmBackend:
             damage = context.get("damage_description", "Vehicle damage")
             police_report = context.get("police_report", "")
 
-            # Estimate payout based on damage description
-            payout = "2847.00"
-            if "total" in damage.lower():
-                payout = "18500.00"
-            elif "door" in damage.lower() or "fender" in damage.lower():
-                payout = "2847.00"
-            elif "windshield" in damage.lower():
-                payout = "450.00"
+            # Determine base cost category
+            dl = damage.lower()
+            if "total" in dl:
+                base = self.BASE_COSTS["total_loss"]
+                category = "total_loss"
+            elif "windshield" in dl:
+                base = self.BASE_COSTS["windshield"]
+                category = "windshield"
+            elif "rear" in dl:
+                base = self.BASE_COSTS["rear"]
+                category = "rear"
+            elif "door" in dl or "fender" in dl:
+                base = self.BASE_COSTS["door_fender"]
+                category = "door_fender"
+            else:
+                base = self.BASE_COSTS["default"]
+                category = "default"
+
+            # Fetch live inflation adjustment from World Bank
+            factor, wb_year, wb_cpi, wb_source = self.fetch_inflation_adjustment()
+            payout = round(base * factor, 2)
+            net_payout = round(payout - 500, 2)
 
             return anka_response(session_id, "claim_approved", {
                 "claim_id": claim_id,
@@ -645,17 +692,25 @@ class StateFarmBackend:
                 "police_report": police_report,
                 "at_fault": at_fault,
                 "damage_description": damage,
-                "estimated_payout": payout,
+                "damage_category": category,
+                "base_cost_2020_usd": base,
+                "inflation_adjustment_factor": round(factor, 4),
+                "inflation_data_year": wb_year,
+                "latest_us_cpi_pct": wb_cpi,
+                "inflation_source": wb_source,
+                "estimated_payout": str(payout),
                 "currency": "USD",
+                "deductible": "500.00",
+                "net_payout": str(net_payout),
                 "adjuster": "Sarah Chen, Adjuster #SF-2291",
                 "status": "approved",
-                "deductible": "500.00",
-                "net_payout": str(round(float(payout) - 500, 2)),
                 "expected_processing_days": 3,
-                "source": "State Farm Insurance (mock)"
-            }, "Claim " + claim_id + " approved. Estimated payout $" + payout +
-               " (net $" + str(round(float(payout) - 500, 2)) + " after deductible). " +
-               "Adjuster Sarah Chen will contact you within 24 hours.")
+                "source": "State Farm Insurance (mock) + World Bank CPI (live)"
+            }, "Claim " + claim_id + " approved. Base cost $" + str(base) +
+               " adjusted by " + str(round((factor-1)*100, 1)) + "% inflation" +
+               " (US CPI " + str(wb_cpi) + "%, World Bank " + wb_year + ")" +
+               " = $" + str(payout) + " (net $" + str(net_payout) + " after deductible)." +
+               " Adjuster Sarah Chen assigned.")
 
         elif "status" in il:
             claim_id = context.get("claim_id", "unknown")

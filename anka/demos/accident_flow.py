@@ -91,7 +91,13 @@ r2 = post(f"{adapter}/interact", {
 claim_id     = r2.get("result", {}).get("claim_id", "CLM-UNKNOWN")
 payout       = r2.get("result", {}).get("estimated_payout", "0.00")
 print(f"  {r2.get('message','')}")
-print(f"  Claim: {claim_id} | Estimated payout: ${payout} | ok={r2.get('ok')}")
+d2 = r2.get("result", {})
+print(f"  Claim: {claim_id} | ok={r2.get('ok')}")
+print(f"  Base cost (2020 USD):  ${d2.get('base_cost_2020_usd', '')}")
+print(f"  Inflation adjustment:  {d2.get('inflation_adjustment_factor','')}x ({d2.get('latest_us_cpi_pct','')}% CPI, {d2.get('inflation_data_year','')})")
+print(f"  Inflation source:      {d2.get('inflation_source','')}")
+print(f"  Adjusted payout:       ${payout}")
+print(f"  Net (after deductible): ${d2.get('net_payout','')}") 
 print()
 
 post(f"{node}/publish", {
