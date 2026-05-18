@@ -473,12 +473,108 @@ class PubMedBackend:
                 "PubMed search failed for: " + query)
 
 
+
+class ArXivBackend:
+    """
+    arXiv preprint backend - live from export.arxiv.org
+    No API key required. Atom XML feed.
+    """
+    name = "arxiv"
+    capabilities = ["preprint_search", "paper_lookup", "abstract_fetch"]
+    BASE = "https://export.arxiv.org/api/query"
+
+    def search(self, query, max_results=3, field="all"):
+        import urllib.parse
+        # Use ti: for title search, all: for full text
+        q = urllib.parse.quote(f'ti:"{query}"' if " " in query else f"{field}:{query}")
+        url = f"{self.BASE}?search_query={q}&max_results={max_results}&sortBy=submittedDate&sortOrder=descending"
+        req = urllib.request.Request(url, headers={"User-Agent": "ANKA/1.0 (anka-interact-protocol)"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            xml = r.read().decode("utf-8")
+        return self.parse_feed(xml)
+
+    def parse_feed(self, xml):
+        import re
+        total_match = re.search(r"<opensearch:totalResults[^>]*>(\d+)</opensearch:totalResults>", xml)
+        total = total_match.group(1) if total_match else "0"
+        entries = re.findall(r"<entry>(.*?)</entry>", xml, re.DOTALL)
+        papers = []
+        for entry in entries:
+            def extract(tag):
+                m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", entry, re.DOTALL)
+                return m.group(1).strip() if m else ""
+            arxiv_id = extract("id").replace("http://arxiv.org/abs/", "").replace("https://arxiv.org/abs/", "")
+            title = re.sub(r"\s+", " ", extract("title"))
+            summary = re.sub(r"\s+", " ", extract("summary"))[:300]
+            published = extract("published")[:10]
+            authors = re.findall(r"<name>(.*?)</name>", entry)[:3]
+            if len(re.findall(r"<name>(.*?)</name>", entry)) > 3:
+                authors.append("et al.")
+            cats = re.findall(r'<category term="([^"]+)"', entry)
+            papers.append({
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "authors": authors,
+                "published": published,
+                "categories": cats[:3],
+                "summary": summary,
+                "url": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                "source": "arXiv"
+            })
+        return papers, total
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        arxiv_id = context.get("arxiv_id")
+        if arxiv_id:
+            try:
+                import urllib.parse
+                url = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
+                req = urllib.request.Request(url, headers={"User-Agent": "ANKA/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    xml = r.read().decode("utf-8")
+                papers, _ = self.parse_feed(xml)
+                if papers:
+                    p = papers[0]
+                    return anka_response(session_id, "paper_returned", p,
+                        p["title"][:80] + " — " + ", ".join(p["authors"]) + " (" + p["published"] + ")")
+            except Exception as e:
+                return anka_reject(session_id, "fetch_failed", str(e),
+                    "Could not fetch arXiv:" + arxiv_id)
+
+        query = intent
+        for prefix in ["search arxiv for ", "find preprints on ", "find papers on ",
+                        "arxiv search ", "preprints on ", "search for "]:
+            if il.startswith(prefix):
+                query = intent[len(prefix):]
+                break
+
+        try:
+            papers, total = self.search(query, max_results=3)
+            if not papers:
+                return anka_reject(session_id, "no_results", "no_papers_found",
+                    "No preprints found on arXiv for: " + query)
+            top = papers[0]
+            msg = ("Found " + total + " preprints on '" + query + "'. Top: " +
+                   top["title"][:60] + " — " + ", ".join(top["authors"]) +
+                   " (" + top["published"] + ")")
+            return anka_response(session_id, "preprints_returned", {
+                "query": query, "total_results": total,
+                "papers": papers, "source": "arXiv"
+            }, msg)
+        except Exception as e:
+            return anka_reject(session_id, "search_failed", str(e),
+                "arXiv search failed for: " + query)
+
+
 BACKENDS = {
     "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
     "nist": NISTBackend(), "nist.gov": NISTBackend(),
     "world-bank": WorldBankBackend(), "worldbank": WorldBankBackend(), "worldbank.org": WorldBankBackend(),
     "pubmed": PubMedBackend(), "ncbi": PubMedBackend(),
+    "arxiv": ArXivBackend(), "arxiv.org": ArXivBackend(),
 }
 
 
