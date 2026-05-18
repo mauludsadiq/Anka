@@ -70,10 +70,13 @@ services:
         condition: service_healthy
       bob:
         condition: service_healthy
+      adapter:
+        condition: service_started
     environment:
       - ALICE=http://alice:18080
       - BOB=http://bob:18081
       - ORIGIN=http://origin:18090
+      - ADAPTER=http://adapter:19200
 
 volumes:
   origin_data:

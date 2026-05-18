@@ -94,3 +94,32 @@ echo "The mesh converged without a central coordinator."
 echo ""
 echo "Alice dashboard: $ALICE/dashboard"
 echo "Bob dashboard:   $BOB/dashboard"
+
+echo ""
+echo "=== Live Institution Integrations ==="
+echo ""
+
+ADAPTER=${ADAPTER:-http://adapter:19200}
+
+echo "=> NIST: Planck constant (live from physics.nist.gov)..."
+curl -s -X POST "$ADAPTER/interact" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo-nist-1","actor_id":"demo","institution":"nist","intent":"What is the Planck constant?","capability":"physical_constants","context":{},"timestamp_unix_secs":1775900000}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ' + d.get('message','error'))"
+
+echo ""
+echo "=> World Bank: US GDP (live from api.worldbank.org)..."
+curl -s -X POST "$ADAPTER/interact" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo-wb-1","actor_id":"demo","institution":"world-bank","intent":"What is the GDP of the United States?","capability":"economic_indicator","context":{},"timestamp_unix_secs":1775900000}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ' + d.get('message','error'))"
+
+echo ""
+echo "=> Shopify: order status (live from anka-test-store.myshopify.com)..."
+curl -s -X POST "$ADAPTER/interact" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo-shopify-1","actor_id":"demo","institution":"the-gap","intent":"Where is my order?","capability":"order_status","context":{"order_id":"1001"},"timestamp_unix_secs":1775900000}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ' + d.get('message','error'))"
+
+echo ""
+echo "=== Live integrations complete ==="
