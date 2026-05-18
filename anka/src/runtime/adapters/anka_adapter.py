@@ -3,6 +3,7 @@ import hashlib
 import argparse
 import re
 import urllib.request
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
@@ -53,7 +54,7 @@ class ShopifyBackend:
     def find_order(self, order_ref):
         name = order_ref.lstrip("#")
         try:
-            data = self.api_get("/orders.json?name=" + name + "&status=any")
+            data = self.api_get("/orders.json?name=%23" + name + "&status=any")
             orders = data.get("orders", [])
             return orders[0] if orders else None
         except Exception:
@@ -382,9 +383,11 @@ class WorldBankBackend:
                formatted + " (" + data["year"] + ", World Bank)")
         return anka_response(session_id, "indicator_returned", data, msg)
 
-import os
+# ── Shopify credentials ──────────────────────────────────────────────────────
+# Set via env vars or edit this file directly for local development.
+# Never commit real tokens to public repos.
 SHOPIFY_STORE = os.environ.get("SHOPIFY_STORE", "anka-test-store.myshopify.com")
-SHOPIFY_TOKEN = os.environ.get("SHOPIFY_TOKEN", "")
+SHOPIFY_TOKEN = os.environ.get("SHOPIFY_TOKEN", "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")
 SHOPIFY = ShopifyBackend(SHOPIFY_STORE, SHOPIFY_TOKEN) if SHOPIFY_TOKEN else GapBackend()
 BACKENDS = {
     "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
