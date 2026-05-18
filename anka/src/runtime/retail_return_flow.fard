@@ -1,0 +1,31 @@
+import("institution_session") as sess
+import("std/list") as list
+
+fn start_return(store, session_id, institution_name, actor_id, order_id, item_id, timestamp_unix_secs) {
+  let store = sess.start_session(store, session_id, institution_name, actor_id, "retail_return", timestamp_unix_secs) in
+  sess.add_event(store, session_id, "return_requested", { order_id: order_id, item_id: item_id }, timestamp_unix_secs)
+}
+
+fn verify_purchase(store, session_id, order_id, item_id, found, timestamp_unix_secs) {
+  sess.add_event(store, session_id, "purchase_verified", { order_id: order_id, item_id: item_id, found: found }, timestamp_unix_secs)
+}
+
+fn authorize_return(store, session_id, return_label_id, refund_amount_cents, timestamp_unix_secs) {
+  let store = sess.add_event(store, session_id, "return_authorized", { return_label_id: return_label_id, refund_amount_cents: refund_amount_cents }, timestamp_unix_secs) in
+  sess.close_session(store, session_id, timestamp_unix_secs)
+}
+
+fn summarize(store, session_id) {
+  let s = sess.get_session(store, session_id) in
+  if s == null then { ok: false, reason: "session not found" }
+  else {
+    ok: true,
+    session_id: session_id,
+    institution_name: s.institution_name,
+    status: s.status,
+    event_count: list.len(s.events),
+    final_event: if list.len(s.events) == 0 then null else s.events[list.len(s.events) - 1]
+  }
+}
+
+export { start_return, verify_purchase, authorize_return, summarize }

@@ -1,0 +1,17 @@
+import("../src/runtime/institution_session") as sess
+import("../src/runtime/retail_return_flow") as flow
+
+test "retail return flow resolves end to end" {
+  let s = sess.empty_session_store() in
+  let s = flow.start_return(s, "sess-1", "the-gap", "user-1", "ORDER-1", "JEANS-1", 1775710900) in
+  let s = flow.verify_purchase(s, "sess-1", "ORDER-1", "JEANS-1", true, 1775710901) in
+  let s = flow.authorize_return(s, "sess-1", "LABEL-1", 4999, 1775710902) in
+  let summary = flow.summarize(s, "sess-1") in
+  summary.ok && summary.status == "closed" && summary.event_count == 3 && summary.final_event.event_kind == "return_authorized"
+}
+
+test "missing session summary fails" {
+  let s = sess.empty_session_store() in
+  let summary = flow.summarize(s, "missing") in
+  summary.ok == false
+}

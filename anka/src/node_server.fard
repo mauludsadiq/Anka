@@ -26,6 +26,9 @@ import("longitudinal") as lon
 import("lineage") as lin
 import("mesh_federation") as mf
 import("query_index") as qi
+import("runtime/institution_registry") as ir
+import("runtime/institution_router") as irt
+import("runtime/institution_session") as sess
 import("dashboard") as dashboard
 import("std/datetime") as dt
 import("weighted_collapse") as wc
@@ -41,6 +44,9 @@ import("longitudinal") as lon
 import("lineage") as lin
 import("mesh_federation") as mf
 import("query_index") as qi
+import("runtime/institution_registry") as ir
+import("runtime/institution_router") as irt
+import("runtime/institution_session") as sess
 import("dashboard") as dashboard
 import("std/datetime") as dt
 
@@ -562,6 +568,72 @@ fn handle(state, peers, local_address, registry, subscriptions, shard_subs, arc,
         trail: trail_result,
         signature_hex: envelope.issuer_signature_hex
       })
+  else if req.path == "/runtime/registry" && req.method == "GET" then
+    let reg = rec.getOr(state, "institution_registry", ir.empty_registry()) in
+    let names = ir.list_names(reg) in
+    let institutions = list.map(names, fn(n) { ir.resolve(reg, n) }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, institutions: institutions, count: list.len(institutions) })
+  else if req.path == "/runtime/registry" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let reg = rec.getOr(state, "institution_registry", ir.empty_registry()) in
+    let next_reg = ir.register(reg, body.name, body.address, body.node_id, body.institution_type) in
+    let next_reg = if rec.has(body, "alias") then ir.add_alias(next_reg, body.alias, body.name) else next_reg in
+    let next_state = rec.set(state, "institution_registry", next_reg) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, name: body.name, registered: true, count: list.len(ir.list_names(next_reg)) })
+  else if str.starts_with(req.path, "/runtime/resolve/") && req.method == "GET" then
+    let name = str.slice(req.path, 17, str.len(req.path)) in
+    let reg = rec.getOr(state, "institution_registry", ir.empty_registry()) in
+    let inst = ir.resolve(reg, name) in
+    if inst == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, str.concat(["institution not found: ", name]))
+    else
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, institution: inst })
+  else if str.starts_with(req.path, "/runtime/route/") && req.method == "GET" then
+    let rest = str.slice(req.path, 15, str.len(req.path)) in
+    let parts = str.split(rest, "/") in
+    let name = list.head(parts) in
+    let path = str.concat(["/", str.join(list.tail(parts), "/")]) in
+    let reg = rec.getOr(state, "institution_registry", ir.empty_registry()) in
+    let route = irt.route(reg, name, path) in
+    if !route.ok then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, route.reason)
+    else
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, route: route })
+  else if req.path == "/runtime/session" && req.method == "POST" then
+    let body = json.decode(req.body) in
+    let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
+    let next_store = sess.start_session(store, body.session_id, body.institution_name, body.actor_id, body.purpose, now) in
+    let next_state = rec.set(state, "session_store", next_store) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, session_id: body.session_id, institution_name: body.institution_name, status: "open" })
+  else if str.starts_with(req.path, "/runtime/session/") && req.method == "GET" then
+    let session_id = str.slice(req.path, 17, str.len(req.path)) in
+    let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
+    let s = sess.get_session(store, session_id) in
+    if s == null then
+      error_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, 404, "session not found")
+    else
+      json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, session: s })
+  else if str.starts_with(req.path, "/runtime/session/") && req.method == "POST" then
+    let session_id = str.slice(req.path, 17, str.len(req.path)) in
+    let body = json.decode(req.body) in
+    let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
+    let action = rec.getOr(body, "action", "event") in
+    let next_store = if action == "close" then
+      sess.close_session(store, session_id, now)
+    else
+      sess.add_event(store, session_id, body.event_kind, rec.getOr(body, "event_data", {}), now)
+    in
+    let next_state = rec.set(state, "session_store", next_store) in
+    let s = sess.get_session(next_store, session_id) in
+    json_response(next_state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, session_id: session_id, status: if s != null then s.status else "unknown", event_count: if s != null then list.len(s.events) else 0 })
+  else if req.path == "/runtime/sessions" && req.method == "GET" then
+    let store = rec.getOr(state, "session_store", sess.empty_session_store()) in
+    let all_ids = rec.keys(store.sessions) in
+    let sessions = list.map(all_ids, fn(id) {
+      let s = sess.get_session(store, id) in
+      { session_id: id, institution_name: s.institution_name, status: s.status, event_count: list.len(s.events), actor_id: s.actor_id, purpose: s.purpose }
+    }) in
+    json_response(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, { ok: true, sessions: sessions, count: list.len(sessions) })
   else if req.path == "/dashboard" && req.method == "GET" then
     { next_state: state, peers: peers, local_address: local_address, next_registry: registry, next_subscriptions: subscriptions, next_archive: arc, response: { status: 200, body: dashboard.html(), "content-type": "text/html" } }
   else if str.starts_with(req.path, "/query/") && req.method == "GET" then
