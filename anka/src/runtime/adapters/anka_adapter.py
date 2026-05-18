@@ -742,7 +742,12 @@ class CityAutoRepairBackend:
 
         if "book" in il or "appointment" in il or "repair" in il or "schedule" in il:
             import hashlib, time
+            preferred = context.get("preferred_day", "").lower()
             slot = self.SLOTS[0]
+            for s in self.SLOTS:
+                if preferred and preferred in s[1].lower():
+                    slot = s
+                    break
             appt_id = "APPT-" + hashlib.sha256((claim_id + slot[0]).encode()).hexdigest()[:8].upper()
 
             # Estimate based on damage
