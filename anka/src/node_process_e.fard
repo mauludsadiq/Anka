@@ -31,7 +31,7 @@ let initial_state = if list.len(existing) > 0 then
   json.decode(existing[0].value)
 else
   let fresh = node.new_node_with_identity(op_identity.node_id, op_identity.private_key_hex, op_identity.public_key_hex) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(fresh), "')"])) in fresh
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", str.replace(json.encode(fresh), "'", "''"), "')"])) in fresh
 
 let peer_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'peers'")
 let initial_peers = if list.len(peer_rows) > 0 then json.decode(peer_rows[0].value) else []
@@ -64,13 +64,13 @@ let _ = net.serve(port, fn(req) {
   let led_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'ledger'") in
   let ledger = if list.len(led_rows) > 0 then json.decode(led_rows[0].value) else econ.empty_ledger() in
   let result = server.handle(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, req) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", json.encode(result.next_state), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", json.encode(result.peers), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", json.encode(result.next_registry), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", json.encode(result.next_subscriptions), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('shard_subs', '", json.encode(result.next_shard_subs), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", json.encode(result.next_archive), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('ledger', '", json.encode(result.next_ledger), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('node_state', '", str.replace(json.encode(result.next_state), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('peers', '", str.replace(json.encode(result.peers), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", str.replace(json.encode(result.next_registry), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", str.replace(json.encode(result.next_subscriptions), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('shard_subs', '", str.replace(json.encode(result.next_shard_subs), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", str.replace(json.encode(result.next_archive), "'", "''"), "')"])) in
+  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('ledger', '", str.replace(json.encode(result.next_ledger), "'", "''"), "')"])) in
   result.response
   })
 })
