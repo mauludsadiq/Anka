@@ -123,6 +123,10 @@ fn log_receipt(seg_archive, receipt) {
   { ...seg_archive, receipt_log: list.append(seg_archive.receipt_log, receipt) }
 }
 
+fn snapshot_count(seg_archive) {
+  list.len(seg_archive.snapshots)
+}
+
 fn segment_count(seg_archive) {
   list.len(seg_archive.segment_index)
 }
@@ -181,4 +185,91 @@ fn merge_archives(a, b) {
   merged_segments
 }
 
-export { empty_segmented_archive, segment_key, append_to_segment, record_event, events_in_segment, events_in_space, events_for_digest, events_in_range, store_snapshot, store_registry_version, log_receipt, segment_count, segment_summary, hot_segments, cold_segments, merge_archives }
+
+// ── Compatibility shim — same API as archive.fard ─────────────────────────────
+
+fn archive_empty() {
+  empty_segmented_archive()
+}
+
+fn record_claim_trail(seg_archive, digest_hex, event_kind, event_data, timestamp_unix_secs) {
+  // Extract claim_space from event_data if present, else use "unknown"
+  let claim_space = rec.getOr(event_data, "claim_space", "unknown") in
+  record_event(seg_archive, claim_space, digest_hex, event_kind, event_data, timestamp_unix_secs)
+}
+
+fn get_claim_trail(seg_archive, digest_hex) {
+  events_for_digest(seg_archive, digest_hex)
+}
+
+fn reconstruct_claim_history(seg_archive, digest_hex) {
+  let trail = events_for_digest(seg_archive, digest_hex) in
+  let published  = list.filter(trail, fn(e) { e.event_kind == "published" }) in
+  let witnessed  = list.filter(trail, fn(e) { e.event_kind == "witnessed" }) in
+  let challenged = list.filter(trail, fn(e) { e.event_kind == "challenged" }) in
+  {
+    digest_hex: digest_hex,
+    trail: trail,
+    published_count: list.len(published),
+    witness_count: list.len(witnessed),
+    challenge_count: list.len(challenged),
+    reconstructable: list.len(published) > 0
+  }
+}
+
+fn archive_digest(obj) {
+  let json_val = json.encode(obj) in
+  str.concat(["seg:", str.slice(json_val, 0, 16)])
+}
+
+
+// ── Compatibility shim — same API as archive.fard ─────────────────────────────
+
+fn archive_empty() {
+  empty_segmented_archive()
+}
+
+fn record_claim_trail(seg_archive, digest_hex, event_kind, event_data, timestamp_unix_secs) {
+  // Extract claim_space from event_data if present, else use "unknown"
+  let claim_space = rec.getOr(event_data, "claim_space", "unknown") in
+  record_event(seg_archive, claim_space, digest_hex, event_kind, event_data, timestamp_unix_secs)
+}
+
+fn get_claim_trail(seg_archive, digest_hex) {
+  events_for_digest(seg_archive, digest_hex)
+}
+
+fn reconstruct_claim_history(seg_archive, digest_hex) {
+  let trail = events_for_digest(seg_archive, digest_hex) in
+  let published  = list.filter(trail, fn(e) { e.event_kind == "published" }) in
+  let witnessed  = list.filter(trail, fn(e) { e.event_kind == "witnessed" }) in
+  let challenged = list.filter(trail, fn(e) { e.event_kind == "challenged" }) in
+  {
+    digest_hex: digest_hex,
+    trail: trail,
+    published_count: list.len(published),
+    witness_count: list.len(witnessed),
+    challenge_count: list.len(challenged),
+    reconstructable: list.len(published) > 0
+  }
+}
+
+fn archive_digest(obj) {
+  let json_val = json.encode(obj) in
+  str.concat(["seg:", str.slice(json_val, 0, 16)])
+}
+
+
+fn registry_version_count(seg_archive) {
+  list.len(rec.keys(seg_archive.registry_versions))
+}
+
+fn has_registry_version(seg_archive, registry_digest_hex) {
+  rec.has(seg_archive.registry_versions, registry_digest_hex)
+}
+
+fn get_registry_version(seg_archive, registry_digest_hex) {
+  rec.get(seg_archive.registry_versions, registry_digest_hex)
+}
+
+export { empty_segmented_archive, archive_empty, record_claim_trail, get_claim_trail, reconstruct_claim_history, registry_version_count, has_registry_version, get_registry_version, archive_digest, segment_key, append_to_segment, record_event, events_in_segment, events_in_space, events_for_digest, events_in_range, store_snapshot, store_registry_version, log_receipt, segment_count, snapshot_count, segment_summary, hot_segments, cold_segments, merge_archives }

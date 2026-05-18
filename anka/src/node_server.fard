@@ -12,7 +12,7 @@ import("fetch_pipeline") as pipeline
 import("registry_gossip") as rg
 import("scoped_gossip") as sg
 import("shard_gossip") as shg
-import("archive") as arch
+import("archive_seg") as arch
 import("weighted_collapse") as wc
 import("claim_set") as cset
 import("bay2_store") as b2

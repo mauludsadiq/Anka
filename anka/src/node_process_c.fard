@@ -9,7 +9,7 @@ import("node") as node
 import("node_config") as ncfg
 import("node_server") as server
 import("registry") as reg
-import("archive") as arch
+import("archive_seg") as arch
 import("economy") as econ
 
 let port = 18082
@@ -17,7 +17,10 @@ let local_address = "http://localhost:18082"
 let db_path = "file:out/node/anka_node_c.db?cache=shared&mode=rwc"
 
 let db = sqlite.open(db_path)
-let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)") in
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS archive_segments (segment_key TEXT PRIMARY KEY, events TEXT, event_count INTEGER)") in
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS archive_snapshots (digest TEXT PRIMARY KEY, label TEXT, timestamp INTEGER)") in
+let _ = sqlite.exec(db, "CREATE TABLE IF NOT EXISTS archive_receipts (digest TEXT PRIMARY KEY, receipt TEXT, timestamp INTEGER)")
 
 let op_config_raw = ncfg.load_config(db)
 let op_config = if op_config_raw.local_address == local_address then op_config_raw
@@ -43,8 +46,16 @@ let initial_registry = if list.len(registry_rows) > 0 then json.decode(registry_
 let sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'subscriptions'")
 let initial_subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else []
 
-let archive_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'")
-let initial_archive = if list.len(archive_rows) > 0 then json.decode(archive_rows[0].value) else arch.archive_empty()
+let seg_rows = sqlite.query(db, "SELECT segment_key, events FROM archive_segments")
+let initial_archive = list.fold(seg_rows, arch.archive_empty(), fn(acc, row) {
+  let events = json.decode(row.events) in
+  let sk = row.segment_key in
+  let next_segments = rec.set(acc.segments, sk, events) in
+  let next_index = if list.any(acc.segment_index, fn(k) { k == sk }) then acc.segment_index
+    else list.append(acc.segment_index, sk) in
+  { ...acc, segments: next_segments, segment_index: next_index,
+    total_events: acc.total_events + list.len(events) }
+})
 
 let state_mutex = mutex.new(0)
 let _ = net.serve(port, fn(req) {
@@ -59,8 +70,16 @@ let _ = net.serve(port, fn(req) {
   let subscriptions = if list.len(sub_rows) > 0 then json.decode(sub_rows[0].value) else [] in
   let shard_sub_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'shard_subs'") in
   let shard_subs = if list.len(shard_sub_rows) > 0 then json.decode(shard_sub_rows[0].value) else { spaces: [], shards: [] } in
-  let arc_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'archive'") in
-  let arc = if list.len(arc_rows) > 0 then json.decode(arc_rows[0].value) else arch.archive_empty() in
+  let seg_rows2 = sqlite.query(db, "SELECT segment_key, events FROM archive_segments") in
+  let arc = list.fold(seg_rows2, arch.archive_empty(), fn(acc, row) {
+    let events = json.decode(row.events) in
+    let sk = row.segment_key in
+    let next_segments = rec.set(acc.segments, sk, events) in
+    let next_index = if list.any(acc.segment_index, fn(k) { k == sk }) then acc.segment_index
+      else list.append(acc.segment_index, sk) in
+    { ...acc, segments: next_segments, segment_index: next_index,
+      total_events: acc.total_events + list.len(events) }
+  }) in
   let led_rows = sqlite.query(db, "SELECT value FROM state WHERE key = 'ledger'") in
   let ledger = if list.len(led_rows) > 0 then json.decode(led_rows[0].value) else econ.empty_ledger() in
   let result = server.handle(state, peers, local_address, registry, subscriptions, shard_subs, arc, ledger, req) in
@@ -69,7 +88,12 @@ let _ = net.serve(port, fn(req) {
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('registry', '", str.replace(json.encode(result.next_registry), "'", "''"), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('subscriptions', '", str.replace(json.encode(result.next_subscriptions), "'", "''"), "')"])) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('shard_subs', '", str.replace(json.encode(result.next_shard_subs), "'", "''"), "')"])) in
-  let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('archive', '", str.replace(json.encode(result.next_archive), "'", "''"), "')"])) in
+  let _ = list.fold(result.next_archive.segment_index, 0, fn(_, sk) {
+    let events = rec.getOr(result.next_archive.segments, sk, []) in
+    let events_json = str.replace(json.encode(events), "'", "''") in
+    let event_count = list.len(events) in
+    sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO archive_segments (segment_key, events, event_count) VALUES ('", sk, "', '", events_json, "', ", str.from(event_count), ")"]))
+  }) in
   let _ = sqlite.exec(db, str.concat(["INSERT OR REPLACE INTO state (key, value) VALUES ('ledger', '", str.replace(json.encode(result.next_ledger), "'", "''"), "')"])) in
   result.response
   })
