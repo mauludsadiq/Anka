@@ -7,8 +7,6 @@ services:
     command: fardrun run --program anka/src/origin_process.fard --out out/origin
     ports:
       - "18090:18090"
-    volumes:
-      - origin_data:/app/out/origin
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:18090/health"]
       interval: 3s
@@ -21,8 +19,6 @@ services:
     command: fardrun run --program anka/src/node_process.fard --out out/node
     ports:
       - "18080:18080"
-    volumes:
-      - alice_data:/app/out/node
     depends_on:
       origin:
         condition: service_healthy
@@ -38,8 +34,6 @@ services:
     command: fardrun run --program anka/src/node_process_b.fard --out out/node
     ports:
       - "18081:18081"
-    volumes:
-      - bob_data:/app/out/node
     depends_on:
       origin:
         condition: service_healthy
@@ -78,7 +72,4 @@ services:
       - ORIGIN=http://origin:18090
       - ADAPTER=http://adapter:19200
 
-volumes:
-  origin_data:
-  alice_data:
-  bob_data:
+
