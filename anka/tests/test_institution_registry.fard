@@ -1,0 +1,26 @@
+import("../src/runtime/institution_registry") as ir
+
+test "empty registry has no institutions" {
+  let r = ir.empty_registry() in
+  ir.list_names(r) == []
+}
+
+test "register institution resolves by name" {
+  let r = ir.empty_registry() in
+  let r = ir.register(r, "the-gap", "http://localhost:18100", "ed25519:gap", "retail") in
+  let e = ir.resolve(r, "the-gap") in
+  e.address == "http://localhost:18100"
+}
+
+test "alias resolves to canonical institution" {
+  let r = ir.empty_registry() in
+  let r = ir.register(r, "the-gap", "http://localhost:18100", "ed25519:gap", "retail") in
+  let r = ir.add_alias(r, "gap", "the-gap") in
+  let e = ir.resolve(r, "gap") in
+  e.node_id == "ed25519:gap"
+}
+
+test "unknown institution resolves null" {
+  let r = ir.empty_registry() in
+  ir.resolve(r, "unknown") == null
+}

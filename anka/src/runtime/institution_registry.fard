@@ -1,0 +1,41 @@
+import("std/rec") as rec
+import("std/list") as list
+
+fn empty_registry() {
+  { institutions: {}, aliases: {} }
+}
+
+fn normalize(name) {
+  name
+}
+
+fn register(registry, name, address, node_id, institution_type) {
+  let key = normalize(name) in
+  let entry = {
+    name: name,
+    address: address,
+    node_id: node_id,
+    institution_type: institution_type,
+    status: "active"
+  } in
+  {
+    institutions: rec.set(registry.institutions, key, entry),
+    aliases: registry.aliases
+  }
+}
+
+fn add_alias(registry, alias, canonical_name) {
+  { ...registry, aliases: rec.set(registry.aliases, normalize(alias), normalize(canonical_name)) }
+}
+
+fn resolve(registry, name) {
+  let key = normalize(name) in
+  let canonical = rec.getOr(registry.aliases, key, key) in
+  rec.getOr(registry.institutions, canonical, null)
+}
+
+fn list_names(registry) {
+  rec.keys(registry.institutions)
+}
+
+export { empty_registry, register, add_alias, resolve, list_names }
