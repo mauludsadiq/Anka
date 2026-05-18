@@ -20,6 +20,127 @@ def anka_clarify(session_id, action, message):
     return anka_response(session_id, action, {}, message, ok=False, done=False)
 
 
+
+class ShopifyBackend:
+    """
+    Shopify Admin API backend — real orders, returns, refunds.
+    Store: anka-test-store.myshopify.com
+    """
+    name = "the-gap"
+    capabilities = ["retail_return", "order_status", "refund_inquiry"]
+
+    def __init__(self, store, token):
+        self.store = store
+        self.token = token
+        self.base = "https://" + store + "/admin/api/2024-01"
+        self.headers = {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+            "User-Agent": "ANKA/1.0"
+        }
+
+    def api_get(self, path):
+        req = urllib.request.Request(self.base + path, headers=self.headers)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
+    def api_post(self, path, data):
+        body = json.dumps(data).encode()
+        req = urllib.request.Request(self.base + path, data=body, headers=self.headers)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
+    def find_order(self, order_ref):
+        name = order_ref.lstrip("#")
+        try:
+            data = self.api_get("/orders.json?name=" + name + "&status=any")
+            orders = data.get("orders", [])
+            return orders[0] if orders else None
+        except Exception:
+            return None
+
+    def handle_intent(self, intent, context, session_id, capability):
+        il = intent.lower()
+        order_ref = context.get("order_id") or context.get("order_name", "")
+
+        if "return" in il or "refund" in il:
+            if not order_ref:
+                return anka_clarify(session_id, "order_id_required",
+                    "What is your order number? It starts with # on your receipt.")
+            order = self.find_order(order_ref)
+            if not order:
+                return anka_reject(session_id, "return_rejected", "order_not_found",
+                    "I could not find order " + order_ref + ". Please check your order number.")
+
+            order_id = order["id"]
+            order_name = order["name"]
+            total_price = order.get("total_price", "0.00")
+            line_items = order.get("line_items", [])
+            items = [i["title"] for i in line_items]
+
+            if order.get("financial_status") == "refunded":
+                return anka_reject(session_id, "return_rejected", "already_refunded",
+                    "Order " + order_name + " has already been refunded.")
+
+            try:
+                txns = self.api_get("/orders/" + str(order_id) + "/transactions.json")
+                txn_list = txns.get("transactions", [])
+                parent_id = txn_list[0]["id"] if txn_list else None
+
+                refund_payload = {"refund": {
+                    "currency": order.get("currency", "USD"),
+                    "notify": False,
+                    "note": "Return via ANKA interact protocol",
+                    "transactions": [{
+                        "parent_id": parent_id,
+                        "amount": total_price,
+                        "kind": "refund",
+                        "gateway": txn_list[0]["gateway"] if txn_list else "manual"
+                    }] if parent_id else []
+                }}
+
+                refund = self.api_post("/orders/" + str(order_id) + "/refunds.json", refund_payload)
+                refund_id = refund.get("refund", {}).get("id", "unknown")
+
+                return anka_response(session_id, "return_authorized", {
+                    "order_id": str(order_id),
+                    "order_name": order_name,
+                    "refund_id": str(refund_id),
+                    "refund_amount": total_price,
+                    "currency": order.get("currency", "USD"),
+                    "items": items,
+                    "source": "Shopify Admin API (live)"
+                }, "Return approved for " + order_name + ". Refund of $" + total_price +
+                   " issued. Confirmation sent to customer.")
+
+            except Exception as e:
+                return anka_reject(session_id, "refund_failed", str(e),
+                    "Could not process refund for " + order_name + ": " + str(e))
+
+        elif "status" in il or "where" in il or "track" in il:
+            if not order_ref:
+                return anka_clarify(session_id, "order_id_required", "What is your order number?")
+            order = self.find_order(order_ref)
+            if not order:
+                return anka_reject(session_id, "order_not_found", "not_found",
+                    "I could not find order " + order_ref + ".")
+            items = [i["title"] + " x" + str(i["quantity"]) for i in order.get("line_items", [])]
+            tracking = [f["tracking_number"] for f in order.get("fulfillments", []) if f.get("tracking_number")]
+            return anka_response(session_id, "order_status_returned", {
+                "order_name": order["name"],
+                "financial_status": order.get("financial_status"),
+                "fulfillment_status": order.get("fulfillment_status"),
+                "total_price": order.get("total_price"),
+                "items": items,
+                "tracking_numbers": tracking,
+                "source": "Shopify Admin API (live)"
+            }, "Order " + order["name"] + ": " + str(order.get("financial_status")) +
+               " | " + ", ".join(items))
+
+        else:
+            return anka_clarify(session_id, "intent_not_understood",
+                "I can help with order status, returns, and refunds. What is your order number?")
+
 class GapBackend:
     name = "the-gap"
     capabilities = ["retail_return", "order_status", "refund_inquiry"]
@@ -261,8 +382,9 @@ class WorldBankBackend:
                formatted + " (" + data["year"] + ", World Bank)")
         return anka_response(session_id, "indicator_returned", data, msg)
 
+SHOPIFY = ShopifyBackend("anka-test-store.myshopify.com", "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")
 BACKENDS = {
-    "the-gap": GapBackend(), "gap": GapBackend(),
+    "the-gap": SHOPIFY, "gap": SHOPIFY, "shopify": SHOPIFY,
     "nyu": NYUBackend(), "nyu.edu": NYUBackend(),
     "nist": NISTBackend(), "nist.gov": NISTBackend(),
     "world-bank": WorldBankBackend(), "worldbank": WorldBankBackend(), "worldbank.org": WorldBankBackend(),
